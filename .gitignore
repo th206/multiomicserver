@@ -1,0 +1,9 @@
+# Shiny-specific
+*.Rproj
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata/
+# General
+*.log
+*.DS_Store

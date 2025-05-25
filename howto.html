@@ -1,0 +1,91 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Comics Server - How To Guide</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+    h2, h3, h4 { color: #2c3e50; }
+    ul { padding-left: 20px; }
+    code { background-color: #f4f4f4; padding: 2px 4px; border-radius: 4px; }
+    .section { margin-bottom: 40px; }
+  </style>
+</head>
+<body>
+
+<h2>📥 Input Data Format</h2>
+<div class="section">
+  <p>The Comics server expects an Excel file with at least <strong>two sheets</strong>:</p>
+  <ol>
+    <li><strong>Association Sheet</strong><br>
+      Must contain the following column headers:<br>
+      - <code>TRAITID1</code>, <code>TRAITID2</code> (mandatory)<br>
+      - Optional: <code>PVALUE</code>, <code>BETA</code> or <code>COR</code><br>
+      If missing, default values will be used: <code>PVALUE = 1</code> and <code>BETA = 1</code>.
+    </li>
+    <li><strong>Annotation Sheet</strong><br>
+      Must contain:<br>
+      - <code>TRAITID</code>, <code>SHORTNAME</code>, <code>PLAT</code><br>
+      <code>PLAT</code> indicates the platform (e.g., OLINK, GWAS, EWAS, MBS) and defines node shape and color.
+    </li>
+  </ol>
+  <p>Optional: A <strong>Platform Style Sheet</strong> to define custom <strong>shape</strong> and <strong>color</strong> for each platform. If not provided, users can select them during import.</p>
+  <p><strong>Note:</strong> Multiple association sheets are allowed. Only <strong>one annotation sheet</strong> is permitted.</p>
+</div>
+
+<h2>🧭 Basic Navigation</h2>
+<div class="section">
+  <p>Start from the <strong>Home page</strong>. To customize it, go to <strong>Import Data > Upload Custom Home Page (HTML or Markdown)</strong>.</p>
+
+  <h4>📤 Upload Data</h4>
+  <p>Use the <strong>Import Data</strong> tab to upload your Excel file. A summary will display:</p>
+  <ul>
+    <li>Total number of associations</li>
+    <li>Number of traits</li>
+    <li>Platforms identified</li>
+  </ul>
+
+  <h4>⚙️ Customize Network</h4>
+  <p>Users can:</p>
+  <ol>
+    <li>Assign <strong>shapes</strong> and <strong>colors</strong> to platforms.</li>
+    <li>Select/deselect sheets for processing.</li>
+  </ol>
+  <p>Clicking <strong>"Process"</strong> will populate the <strong>Table</strong> tab and enable network visualization.</p>
+</div>
+
+<h2>🌐 Network Interaction</h2>
+<div class="section">
+  <ul>
+    <li>Adjust <strong>"Max Nodes"</strong> dropdown (e.g., select 1 to show first-degree neighbors).</li>
+    <li>Hover over nodes/edges to view properties.</li>
+    <li>Drag nodes to rearrange the layout.</li>
+    <li>Click a node to show connected traits in the table below.</li>
+  </ul>
+  <p><strong>Search Tips:</strong> Use backspace to activate search in dropdowns. Use <strong>"Select Platform"</strong> to filter trait choices.</p>
+</div>
+
+<h2>🔗 Selecting Pairwise Associations</h2>
+<div class="section">
+  <p>Under the <strong>Tables</strong> tab, browse and search associations across tabs like GWAS, EWAS, RWAS, MBH, GGM, GENO, CATA, STAT.</p>
+  <p>Click a row, then press <strong>"Focus network on selection"</strong> to view connected traits.</p>
+</div>
+
+<h2>💾 Exporting the Displayed Network</h2>
+<div class="section">
+  <p>Use the <strong>Export</strong> tab to save the current network. To download the full Comics dataset, visit the <a href="https://github.com/karstensuhre/comics">GitHub page</a>.</p>
+</div>
+
+<h2>📚 More Information</h2>
+<ul>
+  <li><a href="">Comics Homepage</a></li>
+  <li><a href="">Comics GitHub Page</a></li>
+  <li><a href="">Comics Server</a></li>
+</ul>
+
+<h2>⚠️ Disclaimer</h2>
+<p>This is a non-profit academic web server and comes with no warranties. Maintained by <a href="">Karsten Suhre/Tanwir Habib</a>. See the links above for details.</p>
+
+</body>
+</html>
