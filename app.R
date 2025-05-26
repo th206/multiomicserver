@@ -951,7 +951,7 @@ server <- function(input, output, session) {
     if (file.exists(persistentHomePath)) {
       includeHTML(persistentHomePath)
     } else {
-      tags$img(src = "about.jpg", width = "100%")
+      tags$img(src = "about.png", width = "100%")
     }
   })
   
