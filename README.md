@@ -30,5 +30,5 @@ The app is available following this link: http://128.84.40.245
 
 Here is a screenshots of the server:
 ![My Image](www/about2.jpg)
-![My Image](www/about3.png)
+![My Image](www/about3.jpg)
 ![My Image](www/about.png)
