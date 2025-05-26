@@ -27,3 +27,6 @@ The app is available following this link: http://128.84.40.245
    docker run -p 3838:3838 ghcr.io/th206/multiomicserver:latest
    ```
    Navigate to your browser and open the following page: http://localhost:3838
+
+Here is a screenshot of the server:
+![My Image](www/about.png)
