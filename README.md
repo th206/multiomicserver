@@ -28,5 +28,7 @@ The app is available following this link: http://128.84.40.245
    ```
    Navigate to your browser and open the following page: http://localhost:3838
 
-Here is a screenshot of the server:
+Here is a screenshots of the server:
+![My Image](www/about2.jpg)
+![My Image](www/about3.png)
 ![My Image](www/about.png)
