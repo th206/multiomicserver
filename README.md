@@ -61,10 +61,10 @@ The following R libraries installed in RStudio:
 install.packages(c("shiny", "shinyjs", "shinydashboard", "readxl", "dplyr", "tidyr", "visNetwork", "DT", "shinyWidgets", "igraph","rlang","writexl","digest"))
 ```
 ## Usage
-Run the App:
+Run the App:<br>
 Open RStudio in the projecr folder and run:
 ```bash
-shiny:runApp("app)
+shiny:runApp("app")
 ```
 or, if you open app/app.R, click Run App in RStudio.
 The app will launch in your browser at:
