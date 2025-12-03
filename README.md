@@ -51,10 +51,10 @@ Users can:
 ## Running the server locally in RStudio:
 All files required to run the app locally using RStudio are in this GitHub repository. Start-up rstudio and then launch app.R as a shiny app.
 
-Requirements <br>
+<b>Requirements </b><br>
 You must have:
-R installed
-RStudio for an easier workflow
+* R installed
+* RStudio for an easier workflow
 The following R libraries installed in RStudio:
 
 ```bash
