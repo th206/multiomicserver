@@ -1,4 +1,4 @@
-# Multi-omics Shiny App
+# Multi-omics Network Explorer
 This Shiny application provides a flexible, user-friendly interface for visualizing custom datasets. It was originally developed for a specific research study [The Molecular Human](http://www.metabolomix.com/comics/) to explore biological networks and associations. The current version generalizes the core functionality and introduces several enhancements, allowing users to upload and explore their own data with minimal setup.
 
 ## What's New in This Version?
