@@ -3,7 +3,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Comics Server - How To Guide</title>
+  <title>Multi Omics Server - How To Guide</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
     h2, h3, h4 { color: #2c3e50; }
@@ -16,13 +16,13 @@
 
 <h2>📥 Input Data Format</h2>
 <div class="section">
-  <p>The Comics server expects an Excel file with at least <strong>two sheets</strong>:</p>
+  <p>The Multi Omics server expects an Excel file with at least <strong>two sheets</strong>:</p>
   <ol>
     <li><strong>Association Sheet</strong><br>
       Must contain the following column headers:<br>
       - <code>TRAITID1</code>, <code>TRAITID2</code> (mandatory)<br>
-      - Optional: <code>PVALUE</code>, <code>BETA</code> or <code>COR</code><br>
-      If missing, default values will be used: <code>PVALUE = 1</code> and <code>BETA = 1</code>.
+      - Optional: <code>PVALUE</code>, <code>BETA</code>, <code>COR</code>, or <code>PLAT</code><br>
+      If missing, default values will be used: <code>PVALUE = 1</code>, <code>BETA = 1</code>, and <code>PLAT = "Platform Unknown"</code>.
     </li>
     <li><strong>Annotation Sheet</strong><br>
       Must contain:<br>
@@ -74,14 +74,14 @@
 
 <h2>💾 Exporting the Displayed Network</h2>
 <div class="section">
-  <p>Use the <strong>Export</strong> tab to save the current network. To download the full Comics dataset, visit the <a href="https://github.com/karstensuhre/comics">GitHub page</a>.</p>
+  <p>Use the <strong>Export</strong> tab to save the current network. To download the full Multi Omics Server dataset, visit the <a href="https://github.com/karstensuhre/comics">GitHub page</a>.</p>
 </div>
 
 <h2>📚 More Information</h2>
 <ul>
-  <li><a href="">Comics Homepage</a></li>
-  <li><a href="">Comics GitHub Page</a></li>
-  <li><a href="">Comics Server</a></li>
+  <li><a href="">Multi Omics Homepage</a></li>
+  <li><a href="">Multi Omics GitHub Page</a></li>
+  <li><a href="">Multi Omics Server</a></li>
 </ul>
 
 <h2>⚠️ Disclaimer</h2>

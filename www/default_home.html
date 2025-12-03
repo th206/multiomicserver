@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+
+body {
+  font-family: 'Arial', sans-serif;
+  margin: 0;
+  padding: 20px;
+  background: #fafafa;
+}
+
+.home-card {
+  background: white;
+  border-radius: 12px;
+  padding: 30px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  margin-bottom: 25px;
+}
+
+.home-title {
+  font-size: 32px;
+  font-weight: 700;
+  color: #5A2C83;
+  margin-bottom: 10px;
+}
+
+.home-subtitle {
+  font-size: 16px;
+  color: #444;
+  margin-bottom: 20px;
+}
+
+.home-abstract-title {
+  font-size: 22px;
+  font-weight: 600;
+  color: #5A2C83;
+  margin-top: 10px;
+}
+
+.home-section {
+  font-size: 18px;
+  font-weight: 600;
+  margin-top: 18px;
+  color: #333;
+}
+
+.home-img {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.home-img img {
+  max-width: 100%;
+  border-radius: 10px;
+  border: 1px solid #e5e5e5;
+}
+
+.omics-pill {
+  padding: 6px 10px;
+  border-radius: 999px;
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: 5px;
+  display: inline-block;
+}
+
+.genome { background: #2b7bba; }
+.epi    { background: #3866b0; }
+.tx     { background: #6ab04c; }
+.prot   { background: #d8841c; }
+.metab  { background: #c0392b; }
+
+ul {
+  margin-top: 10px;
+}
+
+li {
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="home-card">
+  <div class="home-title">Multi-Omics Network Explorer</div>
+  <div class="home-subtitle">
+    An interface to explore data from <span class="omics-pill genome">Genomics</span> <span class="omics-pill epi">Epigenomics</span> <span class="omics-pill tx">Transcriptomics</span> <span class="omics-pill prot">Proteomics</span> <span class="omics-pill metab">Metabolomics</span> associations.
+  </div>
+
+  <div class="home-img">
+    <img src="banner.png" alt="Graphical Abstract">
+  </div>
+
+  <div style="font-size:13px;color:#555;">
+    Different omics layers are integrated into interpretable molecular subnetworks.
+    Explore molecules, identify neighbors.
+  </div>
+
+</div>
+
+<div class="home-card">
+  <div class="home-section">What You Can Do</div>
+  <ul>
+    <li>Upload multi-omics association or correlation files.</li>
+    <li>Build multi-layer networks across platforms.</li>
+    <li>Explore trait-specific neighborhoods interactively.</li>
+    <li>Customize node shapes and colors.</li>
+    <li>Export subnetworks and tables.</li>
+    <li>Save and reload custom views.</li>
+  </ul>
+</div>
+
+<div class="home-card">
+  <div class="home-section">Quick Start</div>
+  <ul>
+    <li>1. Check required formats in <b>Data Formats</b>.</li>
+    <li>2. Upload your excel file via <b>Import Data</b>.</li>
+    <li>3. Explore excel sheets in <b>Tables</b>.</li>
+    <li>4. Visualize networks in <b>Network</b>.</li>
+    <li>5. Export & save views from <b>Export</b> and <b>Saved-views</b>.</li>
+  </ul>
+</div>
+
+</body>
+</html>
