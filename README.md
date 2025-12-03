@@ -51,15 +51,25 @@ Users can:
 ## Running the server locally in RStudio:
 All files required to run the app locally using RStudio are in this GitHub repository. Start-up rstudio and then launch app.R as a shiny app.
 
-Note: you need to have the following libraries installed in RStudio:
+Requirements
+You must have:
+R installed
+RStudio for an easier workflow
+The following R libraries installed in RStudio:
 
 ```bash
 install.packages(c("shiny", "shinyjs", "shinydashboard", "readxl", "dplyr", "tidyr", "visNetwork", "DT", "shinyWidgets", "igraph","rlang","writexl","digest"))
 ```
 ## Usage
-Run:
+Run the App:
+Open RStudio in the projecr folder and run:
 ```bash
-shiny:runApp()
+shiny:runApp("app)
+```
+or, if you open app/app.R, click Run App in RStudio.
+The app will launch in your browser at:
+```bash
+http://localhost:3838
 ```
 ## Running via a web server
 The app is available following this link: http://128.84.40.245 
@@ -71,7 +81,7 @@ The app is available following this link: http://128.84.40.245
    ```
 2. Run the container:
    ```bash
-   docker run -p 3838:3838 ghcr.io/th206/multiomicserver:latest
+   docker run --rm -p 3838:3838 ghcr.io/th206/multiomicserver:latest
    ```
    Navigate to your browser and open the following page: http://localhost:3838
 
