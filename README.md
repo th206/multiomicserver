@@ -88,4 +88,4 @@ The app is available following this link: http://128.84.40.245
 Here is a screenshots of the server:
 ![My Image](www/screenshot1.jpg)
 ![My Image](www/degree.jpg)
-![My Image](www/about.png)
+
