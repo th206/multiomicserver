@@ -54,7 +54,7 @@ All files required to run the app locally using RStudio are in this GitHub repos
 Note: you need to have the following libraries installed in RStudio:
 
 ```bash
-install.packages(c("shiny", "shinydashboard", "readxl", "dplyr", "tidyr", "visNetwork", "DT", "shinyWidgets", "igraph","rlang"))
+install.packages(c("shiny", "shinyjs", "shinydashboard", "readxl", "dplyr", "tidyr", "visNetwork", "DT", "shinyWidgets", "igraph","rlang","writexl","digest"))
 ```
 ## Usage
 Run:
