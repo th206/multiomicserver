@@ -72,7 +72,7 @@ The app will launch in your browser at:
 http://localhost:3838
 ```
 ## Running via a web server
-The app is available following this link: http://128.84.40.245 
+The app is available following this link: http://128.84.41.22/ 
 
 ## Running the Dockerized Shiny App
 1. Pull the image from GitHub Container Registry:
