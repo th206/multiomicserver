@@ -18,77 +18,10 @@ library(digest)
 # Helper Functions for Network Operations
 # ====================================================
 
-neighbors <- function(nodes, network) {
-  nodes <- tolower(nodes)
-  ix <- unlist(lapply(nodes, function(x) {
-    union(which(tolower(network$edges$from_id) == x), which(tolower(network$edges$to_id) == x))
-  })) %>% unique()
-  unique(c(network$edges$from_id[ix], network$edges$to_id[ix]))
-}
-
 stable_pick <- function(key, choices) {
   h <- digest(key, algo = "xxhash32")
   i <- strtoi(substr(h, 1, 7), base = 16L)
   choices[(i %% length(choices)) + 1L]
-}
-
-maxneighbors <- function(nodes, network, limit = 0) {
-  if (limit == 0) limit <- 1E99
-  nnodes <- length(nodes)
-  nnodeslast <- 0
-  nodeslast <- nodes
-  while (nnodes > nnodeslast && nnodes < limit) {
-    nodeslast <- nodes
-    nnodeslast <- nnodes
-    nodes <- neighbors(nodes, network)
-    nnodes <- length(nodes)
-    cat("maxneighbors iteration, nodes:", nnodes, "\n")
-  }
-  selected_nodes <- unique(nodeslast)
-  if (length(selected_nodes) > limit) {
-    cat("maxneighbors trimming nodes from", length(selected_nodes), "to", limit, "\n")
-    # Calculate degree for each node
-    node_scores <- data.frame(id = selected_nodes) %>%
-      mutate(degree = sapply(id, function(x) {
-        sum(network$edges$from_id == x | network$edges$to_id == x, na.rm = TRUE)
-      })) %>%
-      arrange(desc(degree))
-    selected_nodes <- head(node_scores$id, limit)
-  }
-  cat("maxneighbors final nodes:", length(selected_nodes), "\n")
-  selected_nodes
-}
-
-
-maxneighbors_noSTAT <- function(nodes, network, limit = 0) {
-  if (limit == 0) limit <- 1E99
-  nodesin <- nodes
-  nnodes <- length(nodes)
-  nnodeslast <- 0
-  nodeslast <- nodes
-  while ((nnodes > nnodeslast) & (nnodes <= limit)) {
-    nodeslast <- nodes
-    nnodeslast <- nnodes
-    nogrow_nodes <- nodes[grep("STAT: |GWAS: ", nodes)]
-    grow_nodes <- nodes[grep("STAT: |GWAS: ", nodes, invert = TRUE)]
-    nodes <- c(nogrow_nodes, neighbors(grow_nodes, network))
-    nnodes <- length(nodes)
-  }
-  unique(c(nodesin, nodeslast))
-}
-
-nodes2network <- function(nodes, network) {
-  nodes <- tolower(nodes)
-  cat("Input nodes to nodes2network:", paste(head(nodes, 5), collapse = ", "), "\n")
-  ix_from <- unique(unlist(lapply(nodes, function(x) which(tolower(network$edges$from_id) == x))))
-  ix_to <- unique(unlist(lapply(nodes, function(x) which(tolower(network$edges$to_id) == x))))
-  ix <- unique(c(ix_from, ix_to))
-  iy <- unique(unlist(lapply(nodes, function(x) which(tolower(network$nodes$id) == x | tolower(network$nodes$TRAITID) == x))))
-  cat("Nodes matched in network$nodes:", length(iy), "\n")
-  subnet <- list(edges = network$edges[ix, ], nodes = network$nodes[iy, ])
-  subnet$edges <- subnet$edges[subnet$edges$from_id %in% subnet$nodes$id & subnet$edges$to_id %in% subnet$nodes$id, ]
-  cat("Subnet nodes:", nrow(subnet$nodes), "Edges:", nrow(subnet$edges), "\n")
-  subnet
 }
 
 normalize_headers <- function(df) {
@@ -143,7 +76,7 @@ processExcelFile <- function(inFile) {
   anno_cols <- c("TRAITID","SHORTNAME","PLAT")
   custom_cols <- c("PLAT","COLOR","SHAPE")
   
-  datalist <- list(); sheets_ok <- character(); sheets_flag <- character()
+  datalist <- list(); rawSheets <- list(); sheets_ok <- character(); sheets_flag <- character()
   anno <- NULL; custom <- NULL
   
   for (sheet in sheets) {
@@ -172,8 +105,10 @@ processExcelFile <- function(inFile) {
       )
       
       datalist[[sheet]] <- df
+      # store ALL original columns for download (preserves user's full data)
+      rawSheets[[sheet]] <- res$data
       sheets_ok <- c(sheets_ok, sheet)
-      
+
     } else if (res$validAnno) {
       anno <- res$data |>
         dplyr::mutate(TRAITID = trimws(TRAITID)) |>
@@ -209,102 +144,13 @@ processExcelFile <- function(inFile) {
   
 
   list(datalist = datalist,
+       rawSheets = rawSheets,
        sheets_ok = sheets_ok,
        sheets_flag = sheets_flag,
        anno = anno,
        custom = custom)
 }
 
-#############################
-
-# constructNetwork <- function(datalist, anno, custom) {
-#   all_edges <- do.call(rbind, datalist)
-#   cat("Initial edges:", nrow(all_edges), "Sample from/to:", head(all_edges$from, 3), "->", head(all_edges$to, 3), "\n")
-#   all_edges$sign <- sign(all_edges$weight)
-#   all_edges$weight <- abs(all_edges$weight)
-#   all_edges$pvalue <- as.numeric(as.character(all_edges$pvalue))
-#   if(any(is.na(all_edges$pvalue))) {
-#     warning("Some p-values could not be converted to numeric; setting them to 1E-100.")
-#     all_edges$pvalue[is.na(all_edges$pvalue)] <- 1E-100
-#   }
-#   all_edges$pvalue[all_edges$pvalue == 0] <- 1E-100
-#   edge_thickness <- -log10(all_edges$pvalue)
-#   if (min(edge_thickness) == max(edge_thickness)) {
-#     all_edges$width <- 1
-#   } else {
-#     seq_range <- round(seq(min(edge_thickness) - 1, max(edge_thickness) - 1, length.out = 10))
-#     if(length(unique(seq_range)) < length(seq_range)) {
-#       seq_range <- unique(seq_range)
-#     }
-#     all_edges$width <- as.numeric(cut(edge_thickness, breaks = seq_range, labels = FALSE))
-#   }
-#   all_nodes <- data.frame(
-#     TRAITID = unique(sort(c(all_edges$from, all_edges$to, anno$TRAITID))),
-#     stringsAsFactors = FALSE
-#   )
-#   if (!is.null(anno)) {
-#     anno <- anno %>% distinct(TRAITID, .keep_all = TRUE)
-#     all_nodes <- left_join(all_nodes, anno, by = "TRAITID")
-#   } else {
-#     stop("Missing annotation. Please include a sheet with headers: TRAITID, SHORTNAME, PLAT")
-#   }
-#   all_nodes <- all_nodes %>%
-#     mutate(
-#       SHORTNAME = ifelse(is.na(SHORTNAME), TRAITID, SHORTNAME),
-#       PLAT = ifelse(is.na(PLAT), "Unknown", PLAT)
-#     )
-#   
-#   all_edges$from_id <- all_edges$from
-#   all_edges$to_id <- all_edges$to
-#   all_edges$from <- all_nodes$SHORTNAME[match(tolower(all_edges$from), tolower(all_nodes$TRAITID))]
-#   all_edges$to <- all_nodes$SHORTNAME[match(tolower(all_edges$to), tolower(all_nodes$TRAITID))]
-#   all_edges <- all_edges[!is.na(all_edges$from) & !is.na(all_edges$to), ]
-#   all_nodes$id <- all_nodes$SHORTNAME
-#   
-#   
-#   names(all_nodes)[names(all_nodes) == "PLAT"] <- "plat"
-#   if (!is.null(custom)) {
-#     all_platforms <- union(unique(all_nodes$plat), custom$PLAT)
-#     missing_platforms <- setdiff(all_platforms, custom$PLAT)
-#     missing_df <- data.frame(
-#       PLAT = missing_platforms,
-#       COLOR = rep("#999999", length(missing_platforms)),
-#       SHAPE = rep("triangle", length(missing_platforms)),
-#       stringsAsFactors = FALSE
-#     )
-#     custom <- rbind(custom, missing_df)
-#     plat_colors <- setNames(custom$COLOR, custom$PLAT)
-#     plat_shapes <- setNames(custom$SHAPE, custom$PLAT)
-#     all_nodes$color <- plat_colors[all_nodes$plat]
-#     all_nodes$shape <- plat_shapes[all_nodes$plat]
-#   } else {
-#     plat_list <- unique(all_nodes$plat)
-#     default_colors <- setNames(rep("#999999", length(plat_list)), plat_list)
-#     default_shapes <- setNames(rep("star", length(plat_list)), plat_list)
-#     default_colors[c("DNA", "SOMA", "ALAMAR", "BRAIN", "BM", "LD", "CPG", "CLIN",
-#                      "CM", "IgA", "RNA", "HD4", "IgG", "miRNA", "OLINK", "PGP",
-#                      "PM", "SM", "UM", "STAT", "GWAS")] <-
-#       c("#23bbee", "#a62281", "#a62281", "#f2921f", "#ffc815", "#ffc815",
-#         "#145da9", "#a0b6a8", "#57ba47", "#e41d30", "#5c2d83", "#57ba47",
-#         "#e41d30", "#5c2d83", "#a62281", "#e41d30", "#57ba47", "#57ba47",
-#         "#57ba47", "#EEEEEE", "#EEEEEE")
-#     default_shapes[c("UM", "CM", "SM", "DNA", "RNA", "CPG", "STAT", "GWAS")] <-
-#       c("square", "square", "triangle", "diamond", "diamond", "diamond", "circle", "dot")
-#     all_nodes$color <- default_colors[all_nodes$plat]
-#     all_nodes$shape <- default_shapes[all_nodes$plat]
-#   }
-#   all_nodes$group <- all_nodes$plat
-#   all_edges$title <- paste0(
-#     all_edges$type, ": ", all_edges$id,
-#     ", p=", all_edges$pvalue,
-#     ", beta=", ifelse(all_edges$sign > 0, "", "-"), all_edges$weight
-#   )
-#   all_edges$color <- ifelse(all_edges$sign > 0, "blue", "red")
-#   list(edges = all_edges, nodes = all_nodes)
-# }
-############################
-# constructNetwork use SHORTNAME only for node display. 
-#Also, remove the duplicates to avoid more than one edge in the network
 
 constructNetwork <- function(datalist, anno, custom) {
   
@@ -318,8 +164,11 @@ constructNetwork <- function(datalist, anno, custom) {
   all_edges$to   <- trimws(as.character(all_edges$to))
   
   # Sign/weight
-  all_edges$sign   <- sign(all_edges$weight)
-  all_edges$weight <- abs(all_edges$weight)
+  #all_edges$sign   <- sign(all_edges$weight)
+  #all_edges$weight <- abs(all_edges$weight)
+  all_edges$beta  <- all_edges$weight
+  all_edges$sign  <- sign(all_edges$beta)
+  all_edges$weight <- abs(all_edges$beta)
   
   # pvalue is optional in concept, but your downstream uses it for widths
   all_edges$pvalue <- suppressWarnings(as.numeric(as.character(all_edges$pvalue)))
@@ -414,10 +263,12 @@ constructNetwork <- function(datalist, anno, custom) {
   
   # ---- Colors ----
   all_edges$title <- paste0(
-    all_edges$type, ": ", all_edges$id,
-    ", p=", all_edges$pvalue,
-    ", beta=", ifelse(all_edges$sign > 0, "", "-"), all_edges$weight
+    all_edges$type, ": ",
+    all_edges$from_id, " -> ", all_edges$to_id,
+    ", p=", formatC(all_edges$pvalue, format = "e", digits = 2),
+    ", beta=", round(all_edges$beta, 3)
   )
+  
   all_edges$color <- ifelse(all_edges$sign > 0, "blue", "red")
   
   # ---- Platform colors/shapes ----
@@ -477,12 +328,9 @@ server <- function(input, output, session) {
   # Define persistent storage paths
   data_file <- "data.rds"
   custom_settings_file <- "custom_settings.rds"
-  traitLabelTrigger <- reactiveVal(0)
-  labelTrigger <- reactiveVal(0)
   rv <- reactiveValues(
     customSelections = list(),
     useCases = list(),
-    dataLoaded = FALSE,
     selectedTrait = NULL,
     useCaseActive = FALSE,
     triggerNetworkAfterViewLoad = FALSE,
@@ -492,6 +340,7 @@ server <- function(input, output, session) {
   processClicked <- reactiveVal(FALSE)
   myValues <- reactiveValues(
     datalist = NULL,
+    rawSheets = NULL,
     sheets_ok = NULL,
     sheets_flag = NULL,
     anno = NULL,
@@ -501,9 +350,7 @@ server <- function(input, output, session) {
     listItems = NULL,
     allSheets = NULL
   )
-  observeEvent(session, {
-    updateTabItems(session, "tabs", "Tab6")
-  }, once = TRUE)
+  updateTabItems(session, "tabs", "Tab6")
   
   observe({
     if (isTRUE(processClicked())) {
@@ -531,10 +378,7 @@ server <- function(input, output, session) {
   })
   
   
-  ############## New ############
-  #––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
-  # Dynamically show/disable import controls on Tab 7, based on rv$dataLoaded
-  #––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+  # Show import controls only before data is processed (processClicked)
   output$importControls <- renderUI({
     # If data has NOT yet been loaded/processed, show everything as normal:
     if (!processClicked()) {
@@ -592,11 +436,8 @@ server <- function(input, output, session) {
                 fileInput('file_in', 'Choose Excel file',
                           accept = c('.xlsx', '.xls'), multiple = FALSE),
                 
-                uiOutput("SHEETlist"),        
-                uiOutput("summaryStats"),     
-                textOutput("summary1"),       
-                textOutput("summary3"),
-                uiOutput("summary2"),
+                uiOutput("SHEETlist"),
+                uiOutput("summaryStats"),
                 
                 hr(),
                 DTOutput("dynamicTable"),
@@ -649,11 +490,6 @@ server <- function(input, output, session) {
             
             
           ),
-          fluidRow(
-            column(width = 2,
-                   uiOutput("mySelection")
-            )
-          )
       )
       )
     } else {
@@ -708,106 +544,6 @@ server <- function(input, output, session) {
   
   
   
-  # Log package versions
-  observe({
-    cat("Shiny version:", as.character(packageVersion("shiny")), "\n")
-    cat("ShinyWidgets version:", as.character(packageVersion("shinyWidgets")), "\n")
-  })
-  
-  loadData <- function(saved_data, saved_settings) {
-    required_node_cols <- c("TRAITID", "id", "plat", "color", "shape")
-    required_edge_cols <- c("from_id", "to_id", "from", "to")
-    if (!is.null(saved_data$datalist) && 
-        !is.null(saved_data$anno) && 
-        !is.null(saved_data$fullnet) &&
-        all(required_node_cols %in% names(saved_data$fullnet$nodes)) &&
-        all(required_edge_cols %in% names(saved_data$fullnet$edges))) {
-      isolate({
-        myValues$datalist <- saved_data$datalist
-        myValues$sheets_ok <- saved_data$sheets_ok
-        myValues$allSheets <- saved_data$sheets_ok
-        myValues$sheets_flag <- saved_data$sheets_flag
-        myValues$anno <- saved_data$anno
-        myValues$custom <- saved_data$custom
-        myValues$fullnet <- saved_data$fullnet
-        myValues$platlist <- c("ALL", sort(unique(saved_data$fullnet$nodes$plat)))
-        rv$customSelections <- saved_settings$customSelections
-        rv$dataLoaded <- TRUE
-      })
-      
-      isolate({
-        for (platform in names(rv$customSelections)) {
-          if (!is.null(rv$customSelections[[platform]]$color)) {
-            myValues$fullnet$nodes$color[myValues$fullnet$nodes$plat == platform] <- 
-              rv$customSelections[[platform]]$color
-          }
-          if (!is.null(rv$customSelections[[platform]]$shape)) {
-            myValues$fullnet$nodes$shape[myValues$fullnet$nodes$plat == platform] <- 
-              rv$customSelections[[platform]]$shape
-          }
-        }
-      })
-      
-      isolate({
-        updateSelectInput(session, "plat", choices = myValues$platlist, selected = myValues$platlist[1])
-        if (!is.null(myValues$fullnet)) {
-          traitlist <- sort(myValues$fullnet$nodes$id)
-          cat("loadData: Trait list length:", length(traitlist), "\n")
-          cat("loadData: Sample traits:", paste(head(traitlist, 5), collapse = ", "), "\n")
-          cat("loadData: Last few traits:", paste(tail(traitlist, 5), collapse = ", "), "\n")
-          tryCatch({
-            updateSelectInput(
-              session,
-              "trait",
-              choices = traitlist,
-              selected = traitlist[1]
-            )
-            rv$selectedTrait <- traitlist[1]
-          }, error = function(e) {
-            cat("Error updating trait dropdown in loadData:", e$message, "\n")
-            showNotification(paste("Error updating trait dropdown:", e$message), type = "error")
-          })
-        }
-      })
-      
-      cat("loadData: Platforms in fullnet$nodes:", paste(unique(myValues$fullnet$nodes$plat), collapse = ", "), "\n")
-      cat("loadData: Total nodes:", nrow(myValues$fullnet$nodes), "\n")
-      
-      # output$summary1 <- renderText({
-      #   paste0("Total number of unique TRAIT IDs: ", length(unique(myValues$fullnet$nodes$TRAITID)))
-      # })
-      # output$summary3 <- renderText({
-      #   paste0("Total number of associations: ", nrow(myValues$fullnet$edges))
-      # })
-      
-      
-      
-      
-      
-      
-      
-      
-      
-      
-      saveRDS(list(
-        datalist = myValues$datalist,
-        sheets_ok = myValues$sheets_ok,
-        sheets_flag = myValues$sheets_flag,
-        anno = myValues$anno,
-        custom = myValues$custom,
-        fullnet = myValues$fullnet
-      ), data_file)
-      saveRDS(list(customSelections = rv$customSelections), custom_settings_file)
-      cat("Saved data to", data_file, "and settings to", custom_settings_file, "\n")
-      
-      updateTabItems(session, "tabs", "Tab2")
-      cat("Loaded saved data and settings successfully\n")
-      return(TRUE)
-    } else {
-      return(FALSE)
-    }
-  }
-  
   observe({
     req(myValues$fullnet, input$plat)
     if (input$plat == "ALL") {
@@ -840,7 +576,6 @@ server <- function(input, output, session) {
   observeEvent(input$clearData, {
     if (file.exists(data_file)) file.remove(data_file)
     if (file.exists(custom_settings_file)) file.remove(custom_settings_file)
-    rv$dataLoaded <- FALSE
     myValues$datalist <- NULL
     myValues$fullnet <- NULL
     myValues$sheets_ok <- NULL
@@ -883,12 +618,12 @@ server <- function(input, output, session) {
         return(NULL)
       }
       myValues$datalist <- result$datalist
+      myValues$rawSheets <- result$rawSheets
       myValues$sheets_ok <- result$sheets_ok
       myValues$allSheets <- result$sheets_ok
       myValues$sheets_flag <- result$sheets_flag
       myValues$anno <- result$anno
       myValues$custom <- result$custom
-      rv$dataLoaded <- TRUE
       cat("Uploaded datalist sheets:", paste(names(result$datalist), collapse = ", "), "\n")
       result
     }, error = function(e) {
@@ -946,58 +681,37 @@ server <- function(input, output, session) {
         showNotification(paste("Error updating trait dropdown:", e$message), type = "error")
       })
     })
-    # output$summary1 <- renderText({
-    #   paste0("Total number of unique TRAIT IDs: ", length(unique(fullnet$nodes$TRAITID)))
-    # })
-    # output$summary3 <- renderText({
-    #   paste0("Total number of associations: ", nrow(fullnet$edges))
-    # })
-    
-    
-    output$summaryStats <- renderUI({
-      # --- Safely read data ---
-      nodes <- tryCatch(myValues$fullnet$nodes, error = function(e) NULL)
-      edges <- tryCatch(myValues$fullnet$edges, error = function(e) NULL)
-      
-      # --- If missing, show gentle message ---
-      if (is.null(nodes) || is.null(edges) || !"TRAITID" %in% names(nodes)) {
-        return(div(style = "color:#6c757d; margin-top:6px;", "Waiting for data…"))
-      }
-      
-      # --- Compute numbers ---
-      trait_n <- format(length(unique(nodes$TRAITID)), big.mark = ",")
-      assoc_n <- format(nrow(edges), big.mark = ",")
-      
-      # --- Styled dual metric display ---
+  })
+
+  output$summaryStats <- renderUI({
+    nodes <- myValues$fullnet$nodes
+    edges <- myValues$fullnet$edges
+    if (is.null(nodes) || is.null(edges) || !"TRAITID" %in% names(nodes)) {
+      return(div(style = "color:#6c757d; margin-top:6px;", "Waiting for data..."))
+    }
+    trait_n <- format(length(unique(nodes$TRAITID)), big.mark = ",")
+    assoc_n <- format(nrow(edges), big.mark = ",")
+    tags$div(
+      style = "display:flex; gap:10px; margin-top:8px;",
       tags$div(
-        style = "display:flex; gap:10px; margin-top:8px;",
-        tags$div(
-          style = "flex:1; background:#e3f2fd; border-left:4px solid #1565C0;
-               padding:8px 12px; border-radius:8px; text-align:center;",
-          HTML(sprintf("<b>Unique TRAIT IDs</b><br><span style='font-size:20px; color:#0d47a1;'>%s</span>", trait_n))
-        ),
-        tags$div(
-          style = "flex:1; background:#e3f2fd; border-left:4px solid #42A5F5;
-               padding:8px 12px; border-radius:8px; text-align:center;",
-          HTML(sprintf("<b>Total Associations</b><br><span style='font-size:20px; color:#0d47a1;'>%s</span>", assoc_n))
-        )
+        style = "flex:1; background:#e3f2fd; border-left:4px solid #1565C0;
+             padding:8px 12px; border-radius:8px; text-align:center;",
+        HTML(sprintf("<b>Unique TRAIT IDs</b><br><span style='font-size:20px; color:#0d47a1;'>%s</span>", trait_n))
+      ),
+      tags$div(
+        style = "flex:1; background:#e3f2fd; border-left:4px solid #42A5F5;
+             padding:8px 12px; border-radius:8px; text-align:center;",
+        HTML(sprintf("<b>Total Associations</b><br><span style='font-size:20px; color:#0d47a1;'>%s</span>", assoc_n))
       )
-    })
-    
-    
-    observe({
-      # only run once fullnet and its nodes exist
-      req(myValues$fullnet)
-      req(myValues$fullnet$nodes)
-      
-      rv$platform_counts <- myValues$fullnet$nodes %>%
-        dplyr::group_by(plat) %>%
-        dplyr::summarise(
-          trait_count = dplyr::n_distinct(id),   # or TRAITID if you prefer
-          .groups = "drop"
-        ) %>%
-        dplyr::rename(PLAT = plat)
-    })
+    )
+  })
+
+  observe({
+    req(myValues$fullnet, myValues$fullnet$nodes)
+    rv$platform_counts <- myValues$fullnet$nodes %>%
+      dplyr::group_by(plat) %>%
+      dplyr::summarise(trait_count = dplyr::n_distinct(id), .groups = "drop") %>%
+      dplyr::rename(PLAT = plat)
   })
   
   # Dynamic trait dropdown
@@ -1738,13 +1452,13 @@ server <- function(input, output, session) {
   
   # Custom Home Page
   persistentHomePath <- "www/custom_home.html"
-  observeEvent(input$homePageFile, {
-    if (!is.null(input$homePageFile)) {
-      ext <- tools::file_ext(input$homePageFile$name)
+  observeEvent(input$home_upload, {
+    if (!is.null(input$home_upload)) {
+      ext <- tools::file_ext(input$home_upload$name)
       if (ext == "html") {
-        file.copy(input$homePageFile$datapath, persistentHomePath, overwrite = TRUE)
+        file.copy(input$home_upload$datapath, persistentHomePath, overwrite = TRUE)
       } else if (ext == "md") {
-        markdown_text <- readLines(input$homePageFile$datapath, warn = FALSE)
+        markdown_text <- readLines(input$home_upload$datapath, warn = FALSE)
         html_content <- markdown::markdownToHTML(
           text = paste(markdown_text, collapse = "\n"),
           fragment.only = TRUE)
@@ -1819,13 +1533,7 @@ server <- function(input, output, session) {
   #     )
   #   )
   # }, server = FALSE)
-  
-  stable_pick <- function(key, choices) {
-    h <- digest(key, algo = "xxhash32")
-    i <- strtoi(substr(h, 1, 7), base = 16L)
-    choices[(i %% length(choices)) + 1L]
-  }
-  
+
   # output$dynamicTable <- renderDT({
   #   req(myValues$fullnet)
   #   
@@ -2364,14 +2072,11 @@ server <- function(input, output, session) {
         list(dists = dists)
       }, error = function(e) {
         cat("igraph error for", act_trait, ":", e$message, "\n")
-        showNotification(
-          paste("Error computing graph distances for", act_trait, ":", e$message),
-          type = "error"
-        )
         return(NULL)
       })
-      
-      if (is.null(res)) return(NULL)
+
+      # Isolated node (not in any edge): render it alone rather than showing an error
+      if (is.null(res)) return(render_focus_only(focus_id))
       
       dists <- res$dists
       
@@ -2505,66 +2210,269 @@ server <- function(input, output, session) {
     
     n_nodes <- nrow(nodes_df)
     
-    # For big graphs, precompute static layout with igraph (subnet only)
-    if (n_nodes > 150 && nrow(edges_df) > 0) {
+    # Layout choice
+    layout_choice <- if (!is.null(input$layoutChoice)) input$layoutChoice else "fr"
+    use_hierarchical <- (layout_choice == "hierarchical")
+
+    # For large graphs OR user picked a static layout: precompute with igraph
+    use_static <- n_nodes > 150 || layout_choice %in% c("fr", "kk", "circle")
+    if (use_static && !use_hierarchical && nrow(edges_df) > 0) {
       g_sub <- igraph::graph_from_data_frame(
-        d = data.frame(
-          from = as.character(edges_df$from),
-          to   = as.character(edges_df$to),
-          stringsAsFactors = FALSE
-        ),
+        d = data.frame(from = as.character(edges_df$from),
+                       to   = as.character(edges_df$to),
+                       stringsAsFactors = FALSE),
         directed = FALSE,
         vertices = nodes_df %>% dplyr::mutate(id = as.character(id)) %>%
           dplyr::rename(name = id)
       )
-      
-      lay <- igraph::layout_with_fr(g_sub)
+      lay <- switch(layout_choice,
+        "kk"     = igraph::layout_with_kk(g_sub),
+        "circle" = igraph::layout_in_circle(g_sub),
+        igraph::layout_with_fr(g_sub)   # default: fr
+      )
       nodes_df$x <- lay[, 1] * 200
       nodes_df$y <- lay[, 2] * 200
     }
-    
-    # base network (common)
+
+    vis_events <- list(
+      selectNode   = "function(p){Shiny.onInputChange('current_node_selection', p.nodes);}",
+      deselectNode = "function(p){Shiny.onInputChange('current_node_selection', []);}",
+      click        = "function(p){Shiny.onInputChange('click', p.nodes[0]);}"
+    )
+
     net <- visNetwork(nodes_df, edges_df, height = "800px", width = "100%") %>%
-      visNodes(
-        shadow  = list(enabled = TRUE, size = 10),
-        scaling = list(min = 10, max = 30),
-        font    = list(size = 16)
-      ) %>%
+      visNodes(shadow = list(enabled = TRUE, size = 10),
+               scaling = list(min = 10, max = 30),
+               font    = list(size = 16)) %>%
       visEdges(smooth = TRUE) %>%
-      visOptions(
-        #nodesIdSelection = list(enabled = TRUE),
-        nodesIdSelection = FALSE,
-        highlightNearest = FALSE
-      ) %>%
+      visOptions(nodesIdSelection = FALSE, highlightNearest = FALSE) %>%
       visInteraction(navigationButtons = FALSE)
-    
-    if (n_nodes > 150) {
-      # LARGE graph: use static layout, no physics
+
+    if (use_hierarchical) {
+      net <- net %>%
+        visHierarchicalLayout() %>%
+        visPhysics(enabled = FALSE) %>%
+        visEvents(selectNode   = vis_events$selectNode,
+                  deselectNode = vis_events$deselectNode,
+                  click        = vis_events$click)
+    } else if (use_static || n_nodes > 150) {
       net <- net %>%
         visPhysics(enabled = FALSE) %>%
-        visEvents(
-          selectNode   = "function(p){Shiny.onInputChange('current_node_selection', p.nodes);}",
-          deselectNode = "function(p){Shiny.onInputChange('current_node_selection', []);}",
-          click        = "function(p){Shiny.onInputChange('click', p.nodes[0]);}"
-        )
+        visEvents(selectNode   = vis_events$selectNode,
+                  deselectNode = vis_events$deselectNode,
+                  click        = vis_events$click)
     } else {
-      # SMALL/MEDIUM graph: let vis.js settle, then freeze physics
       net <- net %>%
         visLayout(randomSeed = 4711) %>%
         visPhysics(stabilization = list(enabled = TRUE, iterations = 300)) %>%
-        visEvents(
-          stabilized   = "function () { this.setOptions({ physics: { enabled: false } }); }",
-          selectNode   = "function(p){Shiny.onInputChange('current_node_selection', p.nodes);}",
-          deselectNode = "function(p){Shiny.onInputChange('current_node_selection', []);}",
-          click        = "function(p){Shiny.onInputChange('click', p.nodes[0]);}"
-        )
+        visEvents(stabilized   = "function(){this.setOptions({physics:{enabled:false}});}",
+                  selectNode   = vis_events$selectNode,
+                  deselectNode = vis_events$deselectNode,
+                  click        = vis_events$click)
     }
-    
+
     net
   })
-  
 
-  
+  # ── Community detection state ──────────────────────────────────────────────
+  communityColors <- reactiveVal(NULL)   # named vector: node id -> color
+
+  observeEvent(input$communityBtn, {
+    req(storage$nodes, storage$edges)
+    nd <- storage$nodes
+    ed <- storage$edges
+    if (nrow(ed) == 0 || nrow(nd) < 2) {
+      showNotification("Not enough nodes/edges for community detection.", type = "warning")
+      return()
+    }
+    g <- tryCatch(
+      igraph::graph_from_data_frame(ed[, c("from","to")], directed = FALSE,
+                                    vertices = data.frame(name = nd$id)),
+      error = function(e) NULL
+    )
+    if (is.null(g)) return()
+    comm  <- igraph::cluster_louvain(g)
+    n_comm <- max(igraph::membership(comm))
+    # generate distinguishable palette
+    pal <- if (n_comm <= 8) {
+      c("#e41a1c","#377eb8","#4daf4a","#984ea3","#ff7f00","#a65628","#f781bf","#999999")
+    } else {
+      grDevices::rainbow(n_comm)
+    }
+    cols <- pal[igraph::membership(comm)]
+    names(cols) <- igraph::V(g)$name
+    communityColors(cols)
+
+    # update visNetwork in place — no full re-render
+    visNetworkProxy("network") %>%
+      visUpdateNodes(nodes = data.frame(
+        id    = names(cols),
+        color = unname(cols),
+        stringsAsFactors = FALSE
+      ))
+    showNotification(paste("Found", n_comm, "communities."), type = "message", duration = 4)
+  })
+
+  observeEvent(input$resetColorBtn, {
+    req(storage$nodes)
+    communityColors(NULL)
+    visNetworkProxy("network") %>%
+      visUpdateNodes(nodes = data.frame(
+        id           = storage$nodes$id,
+        color        = storage$nodes$color,
+        borderWidth  = 1,
+        color.border = "#848484",
+        stringsAsFactors = FALSE
+      )) %>%
+      visUnselectAll()
+  })
+
+  # ── Edge type filter (checkboxes, rendered from available types) ───────────
+  output$edgeTypeFilter <- renderUI({
+    req(storage$subnet)
+    types <- unique(storage$subnet$edges$type)
+    if (length(types) == 0) return(NULL)
+    checkboxGroupInput("filterTypes", "Edge Types",
+                       choices = types, selected = types, inline = FALSE)
+  })
+
+  # ── Apply p-value / beta / type filters via proxy (no re-render) ──────────
+  observeEvent(list(input$filterPval, input$filterBeta, input$filterTypes), {
+    req(storage$edges, storage$subnet)
+    ed <- storage$subnet$edges
+    if (nrow(ed) == 0) return()
+
+    pval_thresh <- input$filterPval   # -log10 scale
+    beta_thresh <- input$filterBeta
+    types_keep  <- input$filterTypes
+
+    keep <- rep(TRUE, nrow(ed))
+    if (!is.null(pval_thresh) && pval_thresh > 0 && "pvalue" %in% names(ed)) {
+      keep <- keep & (-log10(pmax(ed$pvalue, 1e-300)) >= pval_thresh)
+    }
+    if (!is.null(beta_thresh) && beta_thresh > 0 && "weight" %in% names(ed)) {
+      keep <- keep & (ed$weight >= beta_thresh)
+    }
+    if (!is.null(types_keep) && "type" %in% names(ed)) {
+      keep <- keep & (ed$type %in% types_keep)
+    }
+
+    # map subnet edges back to display edges (from_id -> from in storage$edges)
+    show_pairs <- paste(ed$from_id[keep], ed$to_id[keep], sep = "|||")
+    disp_pairs <- paste(storage$edges$from, storage$edges$to, sep = "|||")
+    hidden_ids <- which(!disp_pairs %in% show_pairs) - 1L   # 0-based for JS
+
+    visNetworkProxy("network") %>%
+      visEdges(hidden = FALSE) %>%  # reset first
+      {
+        if (length(hidden_ids) > 0)
+          visUpdateEdges(., edges = data.frame(
+            id     = seq_len(nrow(storage$edges)) - 1L,
+            hidden = !seq_len(nrow(storage$edges)) - 1L %in% hidden_ids,
+            stringsAsFactors = FALSE
+          ))
+        else .
+      }
+  }, ignoreInit = TRUE)
+
+  # ── Shortest path ──────────────────────────────────────────────────────────
+  output$pathTargetUI <- renderUI({
+    req(storage$nodes)
+    selectInput("pathTarget", "Path target node",
+                choices = c("(select)" = "", sort(storage$nodes$id)),
+                selected = "")
+  })
+
+  observeEvent(input$findPathBtn, {
+    req(storage$nodes, storage$edges, storage$focus, input$pathTarget)
+    if (input$pathTarget == "") {
+      showNotification("Please select a target node.", type = "warning"); return()
+    }
+    focus_id  <- storage$nodes$id[tolower(storage$nodes$TRAITID) == tolower(storage$focus)]
+    if (length(focus_id) == 0) focus_id <- storage$focus
+    target_id <- input$pathTarget
+
+    ed <- storage$edges
+    if (nrow(ed) == 0) { showNotification("No edges in current view.", type = "warning"); return() }
+
+    g <- tryCatch(
+      igraph::graph_from_data_frame(ed[, c("from","to")], directed = FALSE,
+                                    vertices = data.frame(name = storage$nodes$id)),
+      error = function(e) NULL
+    )
+    if (is.null(g)) return()
+
+    path_nodes <- tryCatch({
+      p <- igraph::shortest_paths(g, from = focus_id, to = target_id, output = "vpath")
+      igraph::V(g)$name[p$vpath[[1]]]
+    }, error = function(e) character(0))
+
+    if (length(path_nodes) == 0) {
+      showNotification("No path found between selected nodes.", type = "warning"); return()
+    }
+
+    # Highlight path nodes (bold border) and select them in visNetwork
+    all_nodes <- storage$nodes
+    visNetworkProxy("network") %>%
+      visUpdateNodes(nodes = data.frame(
+        id          = all_nodes$id,
+        borderWidth = ifelse(all_nodes$id %in% path_nodes, 5, 1),
+        color.border = ifelse(all_nodes$id %in% path_nodes, "#FF6600", "#848484"),
+        stringsAsFactors = FALSE
+      )) %>%
+      visSelectNodes(id = path_nodes)
+
+    showNotification(
+      paste("Path length:", length(path_nodes) - 1, "hops —",
+            paste(path_nodes, collapse = " -> ")),
+      type = "message", duration = 8
+    )
+  })
+
+  # ── Node statistics panel ──────────────────────────────────────────────────
+  output$nodeStatsUI <- renderUI({
+    req(input$current_node_selection, storage$edges, storage$nodes)
+    sel <- input$current_node_selection
+    if (length(sel) == 0 || is.null(sel)) return(NULL)
+
+    ed <- storage$edges
+    incident <- ed[tolower(ed$from) == tolower(sel) | tolower(ed$to) == tolower(sel), ]
+    n_total <- nrow(incident)
+
+    # positive / negative from subnet edges (has sign column)
+    sub_ed <- storage$subnet$edges
+    if (!is.null(sub_ed) && nrow(sub_ed) > 0 && "sign" %in% names(sub_ed)) {
+      inc_sub <- sub_ed[tolower(sub_ed$from_id) == tolower(sel) |
+                          tolower(sub_ed$to_id)   == tolower(sel), ]
+      n_pos <- sum(inc_sub$sign > 0, na.rm = TRUE)
+      n_neg <- sum(inc_sub$sign < 0, na.rm = TRUE)
+      strongest <- if (nrow(inc_sub) > 0) {
+        ix <- which.max(abs(inc_sub$weight))
+        partner <- ifelse(tolower(inc_sub$from_id[ix]) == tolower(sel),
+                          inc_sub$to_id[ix], inc_sub$from_id[ix])
+        sprintf("%s (beta=%.3f)", partner, inc_sub$sign[ix] * inc_sub$weight[ix])
+      } else "—"
+    } else {
+      n_pos <- NA; n_neg <- NA; strongest <- "—"
+    }
+
+    box(width = NULL, title = paste("Node:", sel),
+        status = "primary", solidHeader = TRUE,
+        tags$table(class = "table table-condensed",
+          tags$tr(tags$td(tags$b("Degree")),      tags$td(n_total)),
+          tags$tr(tags$td(tags$b("Positive")),    tags$td(if (is.na(n_pos)) "—" else n_pos)),
+          tags$tr(tags$td(tags$b("Negative")),    tags$td(if (is.na(n_neg)) "—" else n_neg)),
+          tags$tr(tags$td(tags$b("Strongest")),   tags$td(strongest))
+        )
+    )
+  })
+
+  # ── PNG download via visNetwork export ────────────────────────────────────
+  observeEvent(input$downloadPngBtn, {
+    visNetworkProxy("network") %>% visExport(type = "png", name = "network_export")
+  })
+
+
   
   
   
@@ -2662,14 +2570,14 @@ server <- function(input, output, session) {
     req(storage$subnet)
     zwi <- storage$subnet$edges
     out <- data.frame(
-      ID = zwi$id,
-      TYPE = zwi$type,
+      ID       = zwi$id,
+      TYPE     = zwi$type,
       TRAITID1 = zwi$from_id,
-      TRAIT1 = zwi$from,
-      BETA = zwi$sign * zwi$weight,
-      PVALUE = zwi$pvalue,
+      TRAIT1   = if ("from_label" %in% names(zwi)) zwi$from_label else zwi$from_id,
+      BETA     = zwi$sign * zwi$weight,
+      PVALUE   = zwi$pvalue,
       TRAITID2 = zwi$to_id,
-      TRAIT2 = zwi$to,
+      TRAIT2   = if ("to_label" %in% names(zwi)) zwi$to_label else zwi$to_id,
       stringsAsFactors = FALSE
     )
     out
@@ -2689,6 +2597,44 @@ server <- function(input, output, session) {
       actionButton("confirmBtn", "Process", class = "submit-data-btn")
     }
   })
+
+  output$downloadButtonUI <- renderUI({
+    req(myValues$fullnet)
+    downloadButton("downloadExcelImport", "Download Data as Excel", class = "btn btn-default")
+  })
+
+  # Shared helper: builds a re-uploadable xlsx list
+  buildExcelDownload <- function() {
+    req(myValues$sheets_ok, myValues$rawSheets, myValues$anno)
+    sheets_to_write <- list()
+
+    # 1) Network sheets with original column headers (TRAITID1, TRAITID2, PVALUE, BETA/COR)
+    for (sh in myValues$sheets_ok) {
+      sheets_to_write[[sh]] <- myValues$rawSheets[[sh]]
+    }
+
+    # 2) Annotation sheet named "ANNO" so it is recognised on re-upload
+    sheets_to_write[["ANNO"]] <- myValues$anno
+
+    # 3) Platform customizations as PLAT/COLOR/SHAPE — recognised by the app on re-upload
+    if (length(rv$customSelections) > 0) {
+      plat_names <- names(rv$customSelections)
+      cust_df <- data.frame(
+        PLAT  = plat_names,
+        COLOR = sapply(plat_names, function(p) rv$customSelections[[p]]$color %||% "#999999"),
+        SHAPE = sapply(plat_names, function(p) rv$customSelections[[p]]$shape %||% "circle"),
+        stringsAsFactors = FALSE
+      )
+      sheets_to_write[["Customizations"]] <- cust_df
+    }
+
+    sheets_to_write
+  }
+
+  output$downloadExcelImport <- downloadHandler(
+    filename = function() paste0("network_data_", Sys.Date(), ".xlsx"),
+    content  = function(file) writexl::write_xlsx(buildExcelDownload(), path = file)
+  )
   
   processedCustomData <- eventReactive(input$confirmBtn, {
     req(input$selectedSheetsInput)
@@ -2753,8 +2699,6 @@ server <- function(input, output, session) {
       incProgress(1, detail = "Switching to Tables tab...")
       Sys.sleep(1)
     })
-    rv$dataLoaded <- TRUE
-    
     updateTabItems(session, "tabs", "Tab2")
     processClicked(TRUE)
   })
@@ -2914,45 +2858,9 @@ server <- function(input, output, session) {
     }
   })
   
-  ############################ New ############
-  # ─────────────────────────────────────────────────────────────────────
-  # Download handler: write selected sheets + customizations to one .xlsx
-  # ─────────────────────────────────────────────────────────────────────
   output$downloadExcel <- downloadHandler(
-    filename = function() {
-      paste0("all_data_with_customizations_", Sys.Date(), ".xlsx")
-    },
-    content = function(file) {
-      # Make sure there is something to export:
-      req(myValues$sheets_ok, myValues$datalist, myValues$anno)
-      
-      # 1) Build a named list of data.frames for each selected sheet
-      sheets_to_write <- list()
-      for (sh in myValues$sheets_ok) {
-        sheets_to_write[[sh]] <- myValues$datalist[[sh]]
-      }
-      
-      # 2) Add the annotation table
-      sheets_to_write[["Annotation"]] <- myValues$anno
-      
-      # 3) Add “Failed Sheets” if there were any
-      if (!is.null(myValues$sheets_flag) && length(myValues$sheets_flag) > 0) {
-        sheets_to_write[["Failed_Sheets"]] <-
-          data.frame(Sheet_Flag = myValues$sheets_flag, stringsAsFactors = FALSE)
-      }
-      
-      # 4) Build a “Customizations” sheet from processedCustomData()
-      cust_df <- processedCustomData()
-      if (!is.null(cust_df)) {
-        sheets_sel <- attr(cust_df, "Sheets_selections")
-        cust_df2 <- cust_df
-        cust_df2$Selected_Sheets <- paste(sheets_sel, collapse = ", ")
-        sheets_to_write[["Customizations"]] <- cust_df2
-      }
-      
-      # 5) Finally, write them all into a single .xlsx
-      writexl::write_xlsx(sheets_to_write, path = file)
-    }
+    filename = function() paste0("network_data_", Sys.Date(), ".xlsx"),
+    content  = function(file) writexl::write_xlsx(buildExcelDownload(), path = file)
   )
   
   
@@ -2978,9 +2886,6 @@ server <- function(input, output, session) {
 # UI Definition
 # ====================================================
 
-js <- "Shiny.addCustomMessageHandler('change_skin', function(skin) {
-  document.body.className = skin;
-});"
 max_nodes_list <- c(1,2,4,6,8,10)
 
 ui <- dashboardPage(
@@ -3048,6 +2953,13 @@ ui <- dashboardPage(
           console.log('Executing forceServerClearNodeSelection');
           Shiny.onInputChange('current_node_selection', []);
           console.log('forceServerClearNodeSelection completed');
+        });
+
+        // Warn before accidental page refresh / tab close
+        window.addEventListener('beforeunload', function(e) {
+          e.preventDefault();
+          e.returnValue = 'Refreshing will reset all data. Are you sure?';
+          return e.returnValue;
         });
       ")),
       tags$style(HTML("
@@ -3193,78 +3105,105 @@ ui <- dashboardPage(
     tabItems(
       tabItem(tabName = "Tab1",
               fluidPage(
-                
-                
+                # Row 1: Focus controls
                 fluidRow(
-                  
-                  
                   column(width = 3,
                          selectInput(inputId = "plat", label = "Select Platform", choices = NULL)
                   ),
-                  
-                  
                   column(width = 3,
                          uiOutput("SelectTrait"),
-                         actionButton("updateNetworkBtn", 
+                         actionButton("updateNetworkBtn",
                                       label = textOutput("updateNetworkLabel", inline = TRUE),
                                       class = "focus-network-btn")
                   ),
-                  
-                  
                   column(width = 2,
                          selectInput(inputId = "maxnodes", label = "Degree (neighbors)",
                                      choices = max_nodes_list, selected = max_nodes_list[2])
                   ),
-                  
-                  # column(4,
-                  #        # New top toolbar for network actions
-                  #        div(style = "display:flex; justify-content:flex-end; gap:8px; margin-top:24px;",
-                  #            actionButton("saveUseCase", "Save as Use-Case",
-                  #                         class = "btn btn-warning", style="color:white; font-weight:600;"),
-                  #            downloadButton("downloadUseCase", "Download Use-Case",
-                  #                           class = "btn btn-info", style="color:white; font-weight:600;"),
-                  #            actionButton("resetNetwork", "Reset Network",
-                  #                         class = "btn btn-primary", style="font-weight:600;")
-                  #        )
-                  # )
-                ),
-                
-                
-                fluidRow(
-                  column(width = 9,
-                         visNetworkOutput("network", height = "calc(100vh - 260px)")
+                  column(width = 2,
+                         selectInput("layoutChoice", "Layout",
+                                     choices = c("Force-directed" = "fr",
+                                                 "Kamada-Kawai"  = "kk",
+                                                 "Circle"        = "circle",
+                                                 "Hierarchical"  = "hierarchical"),
+                                     selected = "fr")
                   ),
-                  column(width = 3,
-                         uiOutput("dynamic_legend")
+                  column(width = 2,
+                         br(),
+                         actionButton("communityBtn",  "Color by Community", class = "btn btn-default",
+                                      style = "margin-top:4px; width:100%;"),
+                         actionButton("resetColorBtn", "Reset Colors",       class = "btn btn-default",
+                                      style = "margin-top:4px; width:100%;")
                   )
                 ),
+
+                # Row 2: Edge filters (collapsible)
+                fluidRow(
+                  column(width = 12,
+                    tags$details(
+                      tags$summary(style = "cursor:pointer; font-weight:600; margin:6px 0;",
+                                   "Edge Filters & Tools"),
+                      fluidRow(
+                        column(width = 3,
+                               sliderInput("filterPval", "-log10(p-value) min",
+                                           min = 0, max = 10, value = 0, step = 0.5)
+                        ),
+                        column(width = 3,
+                               sliderInput("filterBeta", "|Beta| min",
+                                           min = 0, max = 1, value = 0, step = 0.01)
+                        ),
+                        column(width = 3,
+                               uiOutput("edgeTypeFilter")
+                        ),
+                        column(width = 3,
+                               uiOutput("pathTargetUI"),
+                               actionButton("findPathBtn", "Find Shortest Path",
+                                            class = "btn btn-info btn-sm",
+                                            style = "margin-top:4px;")
+                        )
+                      )
+                    )
+                  )
+                ),
+
+                # Row 3: Network canvas + right panel (legend + node stats)
+                fluidRow(
+                  column(width = 9,
+                         visNetworkOutput("network", height = "calc(100vh - 320px)")
+                  ),
+                  column(width = 3,
+                         uiOutput("dynamic_legend"),
+                         hr(),
+                         uiOutput("nodeStatsUI")
+                  )
+                ),
+
+                # Row 4: Node association table (shown on click)
                 fluidRow(
                   column(width = 10,
                          conditionalPanel(
                            condition = "input.current_node_selection && input.current_node_selection.length > 0",
                            uiOutput("networkTableTitle"),
-                           DT::dataTableOutput('tbl.networktable')
+                           DT::dataTableOutput("tbl.networktable")
                          )
+                  )
+                ),
+
+                # Row 5: Action buttons
+                fluidRow(
+                  column(width = 12,
+                         actionButton("saveUseCaseBtn",  "Save as View",    class = "custom-usecase-btn"),
+                         downloadButton("downloadUseCase", "Download View",  class = "download-usecase-btn"),
+                         actionButton("downloadPngBtn",  "Download PNG",     class = "btn btn-default",
+                                      style = "padding:10px 20px; font-size:16px;")
                   )
                 ),
                 fluidRow(
                   column(width = 12,
-                         actionButton("saveUseCaseBtn", "Save as View", class = "custom-usecase-btn"),
-                         downloadButton("downloadUseCase", "Download View", class = "download-usecase-btn"),
-                         #actionButton("resetNetwork", "Reset Network", class = "clear-data-btn")
-                         #actionButton(inputId = "resetNetwork", label = "Reset Network", class = "reset-network-btn")
-                  )
-                ),
-                fluidRow(
-                  column(width = 12,
-                         box(
-                           width = NULL,
-                           title = "Network Instructions",
-                           status = "info",
-                           solidHeader = TRUE,
-                           uiOutput("networkInstructions"),
-                           style = "font-size: 14px; color: #333;"
-                         )
+                         box(width = NULL, title = "Network Instructions",
+                             status = "info", solidHeader = TRUE,
+                             uiOutput("networkInstructions"),
+                             style = "font-size:14px; color:#333;")
                   )
                 )
               )

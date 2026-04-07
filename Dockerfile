@@ -13,7 +13,9 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean
 
 # Install R packages
-RUN R -e "install.packages(c('shiny', 'shinydashboard', 'readxl', 'dplyr', 'tidyr', 'visNetwork', 'igraph', 'DT', 'shinyWidgets', 'markdown', 'rlang'), repos='https://cloud.r-project.org/')"
+RUN R -e "install.packages(c('shiny', 'shinydashboard', 'readxl', 'dplyr', 'tidyr', \
+    'visNetwork', 'igraph', 'DT', 'shinyWidgets', 'markdown', 'rlang', \
+    'writexl', 'digest', 'shinyjs'), repos='https://cloud.r-project.org/')"
 
 # Copy app to Shiny server
 COPY . /srv/shiny-server/
