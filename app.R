@@ -466,7 +466,7 @@ server <- function(input, output, session) {
                   tags$li("Optional Sheet name: ", tags$code("ANNO"))
                 ),
                 tags$hr(),
-                tags$p(tags$em("Examples: gene–gene (PPI), metabolite–enzyme, miRNA–target.")),
+                tags$p(tags$em("Examples: gene-gene (PPI), metabolite-enzyme, miRNA-target.")),
                 
                 # Example file download
                 downloadButton("download_example", "Download Example", class = "btn btn-default",
@@ -1114,7 +1114,7 @@ server <- function(input, output, session) {
   #     
   #     msg <- paste("Loaded view:", input$selectedUseCase)
   #     if (!is.null(saved_desc) && nzchar(saved_desc)) {
-  #       msg <- paste0(msg, " — ", saved_desc)
+  #       msg <- paste0(msg, " - ", saved_desc)
   #     }
   #     showNotification(msg)
   #   }
@@ -1259,7 +1259,7 @@ server <- function(input, output, session) {
     
     msg <- paste("Loaded view:", selectedName)
     if (!is.null(saved_desc) && nzchar(saved_desc)) {
-      msg <- paste0(msg, " — ", saved_desc)
+      msg <- paste0(msg, " - ", saved_desc)
     }
     showNotification(msg)
   })
@@ -2164,7 +2164,9 @@ server <- function(input, output, session) {
         }
         edges_df <- dplyr::distinct(edges_df, from, to, .keep_all = TRUE)
       }
-      
+      # Add explicit sequential IDs so visNetworkProxy can reference edges by ID
+      if (nrow(edges_df) > 0) edges_df$id <- seq_len(nrow(edges_df))
+
       ## --- nodes (preserve platform styling, force labels) ----------------------
       nodes_df <- subnet$nodes
       if (!"id" %in% names(nodes_df)) stop("Expected 'id' column in nodes")
@@ -2303,7 +2305,7 @@ server <- function(input, output, session) {
     names(cols) <- igraph::V(g)$name
     communityColors(cols)
 
-    # update visNetwork in place — no full re-render
+    # update visNetwork in place - no full re-render
     visNetworkProxy("network") %>%
       visUpdateNodes(nodes = data.frame(
         id    = names(cols),
@@ -2327,6 +2329,24 @@ server <- function(input, output, session) {
       visUnselectAll()
   })
 
+  # ── Update filter slider ranges when subnet changes ────────────────────────
+  observe({
+    req(storage$subnet)
+    ed <- storage$subnet$edges
+    if (nrow(ed) == 0) return()
+
+    if ("pvalue" %in% names(ed)) {
+      max_pval <- ceiling(max(-log10(pmax(ed$pvalue, 1e-300)), na.rm = TRUE))
+      max_pval <- max(max_pval, 1)
+      updateSliderInput(session, "filterPval", max = max_pval, value = 0)
+    }
+    if ("weight" %in% names(ed)) {
+      max_beta <- ceiling(max(ed$weight, na.rm = TRUE) * 10) / 10
+      max_beta <- max(max_beta, 0.1)
+      updateSliderInput(session, "filterBeta", max = max_beta, value = 0)
+    }
+  })
+
   # ── Edge type filter (checkboxes, rendered from available types) ───────────
   output$edgeTypeFilter <- renderUI({
     req(storage$subnet)
@@ -2339,40 +2359,35 @@ server <- function(input, output, session) {
   # ── Apply p-value / beta / type filters via proxy (no re-render) ──────────
   observeEvent(list(input$filterPval, input$filterBeta, input$filterTypes), {
     req(storage$edges, storage$subnet)
-    ed <- storage$subnet$edges
-    if (nrow(ed) == 0) return()
+    sub_ed <- storage$subnet$edges
+    disp_ed <- storage$edges
+    if (nrow(sub_ed) == 0 || nrow(disp_ed) == 0) return()
+    if (!"id" %in% names(disp_ed)) return()   # IDs not assigned yet
 
-    pval_thresh <- input$filterPval   # -log10 scale
+    pval_thresh <- input$filterPval
     beta_thresh <- input$filterBeta
     types_keep  <- input$filterTypes
 
-    keep <- rep(TRUE, nrow(ed))
-    if (!is.null(pval_thresh) && pval_thresh > 0 && "pvalue" %in% names(ed)) {
-      keep <- keep & (-log10(pmax(ed$pvalue, 1e-300)) >= pval_thresh)
-    }
-    if (!is.null(beta_thresh) && beta_thresh > 0 && "weight" %in% names(ed)) {
-      keep <- keep & (ed$weight >= beta_thresh)
-    }
-    if (!is.null(types_keep) && "type" %in% names(ed)) {
-      keep <- keep & (ed$type %in% types_keep)
-    }
+    # Determine which subnet edges pass the filters
+    keep <- rep(TRUE, nrow(sub_ed))
+    if (!is.null(pval_thresh) && pval_thresh > 0 && "pvalue" %in% names(sub_ed))
+      keep <- keep & (-log10(pmax(sub_ed$pvalue, 1e-300)) >= pval_thresh)
+    if (!is.null(beta_thresh) && beta_thresh > 0 && "weight" %in% names(sub_ed))
+      keep <- keep & (sub_ed$weight >= beta_thresh)
+    if (!is.null(types_keep) && "type" %in% names(sub_ed))
+      keep <- keep & (sub_ed$type %in% types_keep)
 
-    # map subnet edges back to display edges (from_id -> from in storage$edges)
-    show_pairs <- paste(ed$from_id[keep], ed$to_id[keep], sep = "|||")
-    disp_pairs <- paste(storage$edges$from, storage$edges$to, sep = "|||")
-    hidden_ids <- which(!disp_pairs %in% show_pairs) - 1L   # 0-based for JS
+    # Match subnet rows to display edge rows by from/to pair
+    sub_pairs  <- paste(sub_ed$from_id, sub_ed$to_id, sep = "|||")
+    disp_pairs <- paste(disp_ed$from,   disp_ed$to,   sep = "|||")
+    show_pairs <- sub_pairs[keep]
 
-    visNetworkProxy("network") %>%
-      visEdges(hidden = FALSE) %>%  # reset first
-      {
-        if (length(hidden_ids) > 0)
-          visUpdateEdges(., edges = data.frame(
-            id     = seq_len(nrow(storage$edges)) - 1L,
-            hidden = !seq_len(nrow(storage$edges)) - 1L %in% hidden_ids,
-            stringsAsFactors = FALSE
-          ))
-        else .
-      }
+    update_df <- data.frame(
+      id     = disp_ed$id,
+      hidden = !(disp_pairs %in% show_pairs),
+      stringsAsFactors = FALSE
+    )
+    visNetworkProxy("network") %>% visUpdateEdges(edges = update_df)
   }, ignoreInit = TRUE)
 
   # ── Shortest path ──────────────────────────────────────────────────────────
@@ -2388,8 +2403,13 @@ server <- function(input, output, session) {
     if (input$pathTarget == "") {
       showNotification("Please select a target node.", type = "warning"); return()
     }
-    focus_id  <- storage$nodes$id[tolower(storage$nodes$TRAITID) == tolower(storage$focus)]
-    if (length(focus_id) == 0) focus_id <- storage$focus
+    # Resolve focus TRAITID -> display id (robust to missing TRAITID column)
+    if ("TRAITID" %in% names(storage$nodes)) {
+      focus_id <- storage$nodes$id[tolower(storage$nodes$TRAITID) == tolower(storage$focus)]
+    } else {
+      focus_id <- storage$nodes$id[tolower(storage$nodes$id) == tolower(storage$focus)]
+    }
+    if (length(focus_id) == 0) focus_id <- as.character(storage$focus[1])
     target_id <- input$pathTarget
 
     ed <- storage$edges
@@ -2423,7 +2443,7 @@ server <- function(input, output, session) {
       visSelectNodes(id = path_nodes)
 
     showNotification(
-      paste("Path length:", length(path_nodes) - 1, "hops —",
+      paste("Path length:", length(path_nodes) - 1, "hops -",
             paste(path_nodes, collapse = " -> ")),
       type = "message", duration = 8
     )
@@ -2451,17 +2471,17 @@ server <- function(input, output, session) {
         partner <- ifelse(tolower(inc_sub$from_id[ix]) == tolower(sel),
                           inc_sub$to_id[ix], inc_sub$from_id[ix])
         sprintf("%s (beta=%.3f)", partner, inc_sub$sign[ix] * inc_sub$weight[ix])
-      } else "—"
+      } else "-"
     } else {
-      n_pos <- NA; n_neg <- NA; strongest <- "—"
+      n_pos <- NA; n_neg <- NA; strongest <- "-"
     }
 
     box(width = NULL, title = paste("Node:", sel),
         status = "primary", solidHeader = TRUE,
         tags$table(class = "table table-condensed",
           tags$tr(tags$td(tags$b("Degree")),      tags$td(n_total)),
-          tags$tr(tags$td(tags$b("Positive")),    tags$td(if (is.na(n_pos)) "—" else n_pos)),
-          tags$tr(tags$td(tags$b("Negative")),    tags$td(if (is.na(n_neg)) "—" else n_neg)),
+          tags$tr(tags$td(tags$b("Positive")),    tags$td(if (is.na(n_pos)) "-" else n_pos)),
+          tags$tr(tags$td(tags$b("Negative")),    tags$td(if (is.na(n_neg)) "-" else n_neg)),
           tags$tr(tags$td(tags$b("Strongest")),   tags$td(strongest))
         )
     )
@@ -2616,7 +2636,7 @@ server <- function(input, output, session) {
     # 2) Annotation sheet named "ANNO" so it is recognised on re-upload
     sheets_to_write[["ANNO"]] <- myValues$anno
 
-    # 3) Platform customizations as PLAT/COLOR/SHAPE — recognised by the app on re-upload
+    # 3) Platform customizations as PLAT/COLOR/SHAPE - recognised by the app on re-upload
     if (length(rv$customSelections) > 0) {
       plat_names <- names(rv$customSelections)
       cust_df <- data.frame(
