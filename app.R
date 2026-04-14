@@ -44,111 +44,204 @@ normalize_headers <- function(df) {
 processExcelSheet <- function(inFile, sheet, mand_cols, anno_cols, custom_cols) {
   data <- readxl::read_excel(path = inFile, sheet = sheet, .name_repair = "unique_quiet")
   data <- normalize_headers(data)
-  
+
+  # Drop completely empty rows (all NA)
+  data <- data[rowSums(!is.na(data)) > 0, , drop = FALSE]
+
   has_traitid1 <- "TRAITID1" %in% names(data)
   has_traitid2 <- "TRAITID2" %in% names(data)
   validNetwork <- has_traitid1 && has_traitid2
-  
+
+  warnings <- character()
+
   if (validNetwork) {
-    # Ensure both PVALUE and weight exist (weight := BETA/COR)
-    has_p <- "PVALUE" %in% names(data)
-    has_w <- any(c("BETA","COR") %in% names(data))
-    
-    if (!has_p && has_w)  data$PVALUE <- 0.05
-    if (has_p && !has_w)  data$BETA   <- 1    # create weight source
-    if (!has_p && !has_w) { data$PVALUE <- 1; data$BETA <- 1 }
+    # Drop rows where TRAITID1 or TRAITID2 is NA/empty
+    before <- nrow(data)
+    data <- data[!is.na(data$TRAITID1) & trimws(as.character(data$TRAITID1)) != "" &
+                 !is.na(data$TRAITID2) & trimws(as.character(data$TRAITID2)) != "", , drop = FALSE]
+    dropped <- before - nrow(data)
+    if (dropped > 0)
+      warnings <- c(warnings, sprintf("%d row(s) removed: TRAITID1 or TRAITID2 was empty.", dropped))
+
+    if (nrow(data) == 0) {
+      warnings <- c(warnings, "Sheet has TRAITID1/TRAITID2 columns but no valid data rows.")
+      validNetwork <- FALSE
+    } else {
+      # PVALUE / weight column handling with explicit warnings
+      has_p <- "PVALUE" %in% names(data)
+      has_w <- any(c("BETA","COR") %in% names(data))
+
+      if (!has_p && has_w) {
+        data$PVALUE <- 0.05
+        warnings <- c(warnings, "PVALUE column not found; defaulting to 0.05 for all edges.")
+      }
+      if (has_p && !has_w) {
+        data$BETA <- 1
+        warnings <- c(warnings, "BETA/COR column not found; edge weight defaulting to 1.")
+      }
+      if (!has_p && !has_w) {
+        data$PVALUE <- 1; data$BETA <- 1
+        warnings <- c(warnings, "PVALUE and BETA/COR columns not found; both defaulting to 1.")
+      }
+
+      # Check for non-numeric PVALUE after coercion
+      if ("PVALUE" %in% names(data)) {
+        pval_num <- suppressWarnings(as.numeric(as.character(data$PVALUE)))
+        n_bad_p <- sum(is.na(pval_num) & !is.na(data$PVALUE))
+        if (n_bad_p > 0)
+          warnings <- c(warnings, sprintf("%d PVALUE value(s) could not be converted to numeric; set to 1.", n_bad_p))
+      }
+
+      # Check for non-numeric BETA/COR after coercion
+      wcol <- intersect(c("BETA","COR"), names(data))
+      if (length(wcol) > 0) {
+        w_num <- suppressWarnings(as.numeric(as.character(data[[wcol[1]]])))
+        n_bad_w <- sum(is.na(w_num) & !is.na(data[[wcol[1]]]))
+        if (n_bad_w > 0)
+          warnings <- c(warnings, sprintf("%d %s value(s) could not be converted to numeric; set to 0.", n_bad_w, wcol[1]))
+      }
+    }
   }
-  
+
   validAnno   <- all(toupper(anno_cols)   %in% names(data))
   validCustom <- all(toupper(custom_cols) %in% names(data))
-  
+
   list(sheet=sheet, data=data,
        validNetwork=validNetwork,
        validAnno=validAnno,
-       validCustom=validCustom)
+       validCustom=validCustom,
+       warnings=warnings)
 }
 
 
 processExcelFile <- function(inFile) {
   sheets <- readxl::excel_sheets(inFile)
-  
-  mand_cols <- c("TRAITID1","TRAITID2","PVALUE","BETA","COR")
-  anno_cols <- c("TRAITID","SHORTNAME","PLAT")
+
+  if (length(sheets) == 0)
+    stop("The uploaded file contains no sheets.")
+
+  mand_cols   <- c("TRAITID1","TRAITID2","PVALUE","BETA","COR")
+  anno_cols   <- c("TRAITID","SHORTNAME","PLAT")
   custom_cols <- c("PLAT","COLOR","SHAPE")
-  
-  datalist <- list(); rawSheets <- list(); sheets_ok <- character(); sheets_flag <- character()
-  anno <- NULL; custom <- NULL
-  
+
+  datalist <- list(); rawSheets <- list()
+  sheets_ok <- character(); sheets_flag <- character(); sheets_warn <- character()
+  anno <- NULL; custom <- NULL; anno_provided <- FALSE
+
   for (sheet in sheets) {
-    res <- processExcelSheet(inFile, sheet, mand_cols, anno_cols, custom_cols)
-    
+    res <- tryCatch(
+      processExcelSheet(inFile, sheet, mand_cols, anno_cols, custom_cols),
+      error = function(e)
+        list(sheet=sheet, data=data.frame(), validNetwork=FALSE,
+             validAnno=FALSE, validCustom=FALSE, warnings=character(),
+             read_error=e$message)
+    )
+
+    # Surface any read error for this sheet
+    if (!is.null(res$read_error)) {
+      sheets_flag <- c(sheets_flag,
+                       sprintf("[%s] Could not read sheet: %s", sheet, res$read_error))
+      next
+    }
+
+    # Collect per-sheet data quality warnings
+    if (length(res$warnings) > 0)
+      sheets_warn <- c(sheets_warn,
+                       sprintf("[%s] %s", sheet, res$warnings))
+
     if (res$validNetwork) {
       data <- res$data
-      
-      # choose weight column if present
-      wcol <- intersect(c("BETA","COR"), names(data))
-      weight <- if (length(wcol)) data[[wcol[1]]] else rep(1, nrow(data))
-      pval <- data[["PVALUE"]]; if (is.null(pval)) pval <- rep(0.05, nrow(data))
-      
-      # ensure id exists
+      wcol   <- intersect(c("BETA","COR"), names(data))
+      weight <- if (length(wcol)) suppressWarnings(as.numeric(as.character(data[[wcol[1]]]))) else rep(1, nrow(data))
+      pval   <- suppressWarnings(as.numeric(as.character(data[["PVALUE"]])))
+      weight[is.na(weight)] <- 0
+      pval[is.na(pval)]     <- 1
+
       if (!"id" %in% names(data)) data$id <- paste0(sheet, "_", seq_len(nrow(data)))
-      
-      # build edges (safe, now columns definitely exist)
+
       df <- data.frame(
-        to     = trimws(data[["TRAITID1"]]),
-        from   = trimws(data[["TRAITID2"]]),
-        pvalue = as.numeric(pval),
-        weight = as.numeric(weight),
-        id     = data[["id"]],
+        to     = trimws(as.character(data[["TRAITID1"]])),
+        from   = trimws(as.character(data[["TRAITID2"]])),
+        pvalue = pval,
+        weight = weight,
+        id     = as.character(data[["id"]]),
         type   = sheet,
         stringsAsFactors = FALSE
       )
-      
-      datalist[[sheet]] <- df
-      # store ALL original columns for download (preserves user's full data)
+
+      # Drop self-loops
+      n_self <- sum(tolower(df$from) == tolower(df$to))
+      if (n_self > 0) {
+        df <- df[tolower(df$from) != tolower(df$to), ]
+        sheets_warn <- c(sheets_warn,
+                         sprintf("[%s] %d self-loop edge(s) removed (TRAITID1 == TRAITID2).", sheet, n_self))
+      }
+
+      datalist[[sheet]]  <- df
       rawSheets[[sheet]] <- res$data
-      sheets_ok <- c(sheets_ok, sheet)
+      sheets_ok          <- c(sheets_ok, sheet)
 
     } else if (res$validAnno) {
-      anno <- res$data |>
-        dplyr::mutate(TRAITID = trimws(TRAITID)) |>
+      anno_provided <- TRUE
+      raw_anno <- res$data |>
+        dplyr::mutate(
+          TRAITID   = trimws(as.character(TRAITID)),
+          SHORTNAME = trimws(as.character(SHORTNAME)),
+          PLAT      = trimws(as.character(PLAT))
+        ) |>
+        dplyr::filter(!is.na(TRAITID) & TRAITID != "") |>
         dplyr::select(dplyr::all_of(anno_cols))
-      
+
+      # Warn about duplicate TRAITIDs in annotation
+      dups <- raw_anno$TRAITID[duplicated(tolower(raw_anno$TRAITID))]
+      if (length(dups) > 0)
+        sheets_warn <- c(sheets_warn,
+                         sprintf("[%s] Duplicate TRAITID(s) in annotation (first kept): %s",
+                                 sheet, paste(head(unique(dups), 5), collapse = ", ")))
+
+      anno <- raw_anno |> dplyr::distinct(TRAITID, .keep_all = TRUE)
+
     } else if (res$validCustom) {
       custom <- res$data |> dplyr::select(dplyr::all_of(custom_cols))
-      
+
     } else {
-      # precise, helpful message for this sheet
-      need <- c("TRAITID1","TRAITID2")
+      need         <- c("TRAITID1","TRAITID2")
       missing_cols <- setdiff(need, names(res$data))
-      if (length(missing_cols) == 0) missing_cols <- "TRAITID1/TRAITID2 not detected (check spelling/case)."
-      sheets_flag <- c(sheets_flag,
-                       sprintf("[%s] Missing required columns: %s",
-                               sheet, paste(missing_cols, collapse = ", ")))
+      msg <- if (length(missing_cols) > 0)
+        paste("Missing required columns:", paste(missing_cols, collapse = ", "))
+      else
+        "TRAITID1/TRAITID2 not detected (check spelling/case)."
+      sheets_flag <- c(sheets_flag, sprintf("[%s] %s", sheet, msg))
     }
   }
-  
-  if (length(datalist) == 0) {
-    stop("No valid network sheets found. Each network sheet must contain TRAITID1 and TRAITID2 (case-insensitive).")
-  }
-  
+
+  if (length(datalist) == 0)
+    stop(paste0(
+      "No valid network sheet found. Each network sheet must have TRAITID1 and TRAITID2 columns (case-insensitive).",
+      if (length(sheets_flag) > 0) paste0("\n\nSheet issues detected:\n", paste(sheets_flag, collapse = "\n")) else ""
+    ))
+
+  # Auto-generate annotation if none provided, with a clear warning
   if (is.null(anno)) {
     all_traits <- unique(unlist(lapply(datalist, function(df) c(as.character(df$to), as.character(df$from)))))
     anno <- data.frame(
-      TRAITID = all_traits,
+      TRAITID   = all_traits,
       SHORTNAME = all_traits,
-      PLAT = rep("Unknown", length(all_traits)),
+      PLAT      = rep("Unknown", length(all_traits)),
       stringsAsFactors = FALSE
     )
+    if (!anno_provided)
+      sheets_warn <- c(sheets_warn,
+                       "No ANNO sheet found. All nodes assigned to platform 'Unknown'. Add a sheet with TRAITID, SHORTNAME, PLAT columns to customise node appearance.")
   }
-  
 
-  list(datalist = datalist,
-       rawSheets = rawSheets,
-       sheets_ok = sheets_ok,
+  list(datalist    = datalist,
+       rawSheets   = rawSheets,
+       sheets_ok   = sheets_ok,
        sheets_flag = sheets_flag,
-       anno = anno,
-       custom = custom)
+       sheets_warn = sheets_warn,
+       anno        = anno,
+       custom      = custom)
 }
 
 
@@ -343,6 +436,7 @@ server <- function(input, output, session) {
     rawSheets = NULL,
     sheets_ok = NULL,
     sheets_flag = NULL,
+    sheets_warn = NULL,
     anno = NULL,
     custom = NULL,
     fullnet = NULL,
@@ -438,6 +532,7 @@ server <- function(input, output, session) {
                 
                 uiOutput("SHEETlist"),
                 uiOutput("summaryStats"),
+                uiOutput("sheetReport"),
                 
                 hr(),
                 DTOutput("dynamicTable"),
@@ -581,6 +676,7 @@ server <- function(input, output, session) {
     myValues$sheets_ok <- NULL
     myValues$allSheets <- NULL
     myValues$sheets_flag <- NULL
+    myValues$sheets_warn <- NULL
     myValues$anno <- NULL
     myValues$custom <- NULL
     myValues$platlist <- NULL
@@ -599,38 +695,23 @@ server <- function(input, output, session) {
     
     tryCatch({
       result <- processExcelFile(input$file_in$datapath)
-      if(length(result$datalist) == 0){
-        sendSweetAlert(
-          session = session,
-          title = "Missing Mandatory Sheet",
-          text = "The uploaded file does not contain any sheet with the mandatory headers: TRAITID1, TRAITID2, PVALUE, and one of BETA or COR.",
-          type = "error"
-        )
-        return(NULL)
-      }
-      if(is.null(result$anno)) {
-        sendSweetAlert(
-          session = session,
-          title = "Missing Annotation",
-          text = "The uploaded file is missing the annotation sheet with headers: TRAITID, SHORTNAME, PLAT.",
-          type = "error"
-        )
-        return(NULL)
-      }
-      myValues$datalist <- result$datalist
-      myValues$rawSheets <- result$rawSheets
-      myValues$sheets_ok <- result$sheets_ok
-      myValues$allSheets <- result$sheets_ok
+
+      myValues$datalist    <- result$datalist
+      myValues$rawSheets   <- result$rawSheets
+      myValues$sheets_ok   <- result$sheets_ok
+      myValues$allSheets   <- result$sheets_ok
       myValues$sheets_flag <- result$sheets_flag
-      myValues$anno <- result$anno
-      myValues$custom <- result$custom
+      myValues$sheets_warn <- result$sheets_warn
+      myValues$anno        <- result$anno
+      myValues$custom      <- result$custom
       cat("Uploaded datalist sheets:", paste(names(result$datalist), collapse = ", "), "\n")
+
       result
     }, error = function(e) {
       sendSweetAlert(
         session = session,
-        title = "Error processing file",
-        text = paste("Error:", e$message),
+        title = "File could not be processed",
+        text = e$message,
         type = "error"
       )
       return(NULL)
@@ -703,6 +784,68 @@ server <- function(input, output, session) {
              padding:8px 12px; border-radius:8px; text-align:center;",
         HTML(sprintf("<b>Total Associations</b><br><span style='font-size:20px; color:#0d47a1;'>%s</span>", assoc_n))
       )
+    )
+  })
+
+  output$sheetReport <- renderUI({
+    ok   <- myValues$sheets_ok
+    flag <- myValues$sheets_flag
+    warn <- myValues$sheets_warn
+    if (is.null(ok) && is.null(flag)) return(NULL)
+
+    items <- list()
+
+    # --- Sheets successfully loaded ---
+    if (length(ok) > 0) {
+      items <- c(items, list(
+        tags$div(
+          style = "font-weight:600; color:#1b5e20; margin-bottom:4px;",
+          icon("check-circle"), sprintf(" %d sheet(s) loaded:", length(ok))
+        ),
+        tags$ul(
+          style = "margin:0 0 6px 16px; padding:0; list-style:disc;",
+          lapply(ok, function(s) tags$li(tags$code(s)))
+        )
+      ))
+    }
+
+    # --- Sheets skipped with reasons ---
+    if (length(flag) > 0) {
+      items <- c(items, list(
+        tags$div(
+          style = "font-weight:600; color:#b71c1c; margin-bottom:4px;",
+          icon("exclamation-triangle"),
+          sprintf(" %d sheet(s) not used:", length(flag))
+        ),
+        tags$ul(
+          style = "margin:0 0 6px 16px; padding:0; list-style:disc;",
+          lapply(flag, function(msg) tags$li(msg))
+        )
+      ))
+    }
+
+    # --- Data quality notices ---
+    if (length(warn) > 0) {
+      items <- c(items, list(
+        tags$div(
+          style = "font-weight:600; color:#e65100; margin-bottom:4px;",
+          icon("info-circle"), " Data notices:"
+        ),
+        tags$ul(
+          style = "margin:0 0 6px 16px; padding:0; list-style:disc;",
+          lapply(warn, function(msg) tags$li(msg))
+        )
+      ))
+    }
+
+    tags$div(
+      style = paste(
+        "margin-top:10px; padding:10px 14px; border-radius:6px;",
+        "background:#f9f9f9; border:1px solid #ddd; font-size:13px;"
+      ),
+      tags$b("Upload Summary"),
+      tags$hr(style = "margin:6px 0;"),
+      do.call(tagList, items)
     )
   })
 
@@ -2758,17 +2901,7 @@ server <- function(input, output, session) {
     }
   })
   
-  output$SAMPLEtable <- renderUI({
-    req(myValues$sheets_flag)
-    tagList(
-      h4("Sheets That Did Not Qualify"),
-      DT::dataTableOutput("failedTable")
-    )
-  })
-  
-  output$failedTable <- DT::renderDataTable({
-    data.frame(Sheet_Flag = myValues$sheets_flag, stringsAsFactors = FALSE)
-  }, options = list(pageLength = 5, scrollX = TRUE), rownames = FALSE)
+  output$SAMPLEtable <- renderUI({ NULL })
   
   output$processedTable <- DT::renderDataTable({
     req(processedCustomData())
