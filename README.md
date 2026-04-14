@@ -86,6 +86,6 @@ Users can:
    - Click a node to show connected traits in the table below.
 
 Here is a screenshots of the server:
-![My Image](www/screenshot1.jpg)
-![My Image](www/degree.jpg)
+![My Image](www/about2.jpg)
+![My Image](www/banner.png)
 
