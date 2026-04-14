@@ -448,13 +448,8 @@ server <- function(input, output, session) {
   
   observe({
     if (isTRUE(processClicked())) {
-      # Hide Data Formats (Tab4)
-      shinyjs::hide(selector = "a[data-value='Tab4']")
-      # Hide Import Data (Tab7)
       shinyjs::hide(selector = "a[data-value='Tab7']")
     } else {
-      # Show them when Process has NOT been clicked (or after clear)
-      shinyjs::show(selector = "a[data-value='Tab4']")
       shinyjs::show(selector = "a[data-value='Tab7']")
     }
   })
@@ -552,20 +547,32 @@ server <- function(input, output, session) {
               box(
                 width = 12, solidHeader = TRUE, status = "info",
                 title = "Data Format Guide",
-                
+
                 tags$p("Your file should contain at least two columns defining pairwise links."),
                 tags$ol(
                   tags$li(tags$b("TRAITID1 and TRAITID2 = nodes"), " (e.g., ", tags$code("GeneA, GeneB"), ")."),
                   tags$li("Optional columns (used for filtering/visuals): ",
                           tags$code("PVALUE"), ", ", tags$code("BETA"), ", ", tags$code("COR"), "."),
-                  tags$li("Optional Sheet name: ", tags$code("ANNO"))
+                  tags$li("Optional annotation sheet: ", tags$code("ANNO"),
+                          " with columns ", tags$code("TRAITID"), ", ", tags$code("SHORTNAME"), ", ", tags$code("PLAT"), ".")
                 ),
-                tags$hr(),
-                tags$p(tags$em("Examples: gene-gene (PPI), metabolite-enzyme, miRNA-target.")),
-                
+                tags$p(tags$em("Examples: gene\u2013gene (PPI), metabolite\u2013enzyme, miRNA\u2013target.")),
+
                 # Example file download
                 downloadButton("download_example", "Download Example", class = "btn btn-default",
-                               style = "margin-top:6px;")
+                               style = "margin-bottom:10px;"),
+
+                tags$hr(),
+                tags$details(
+                  tags$summary(
+                    style = "cursor:pointer; font-weight:600; color:#1565C0;",
+                    "Full Format Documentation (click to expand)"
+                  ),
+                  tags$div(
+                    style = "margin-top:10px; max-height:400px; overflow-y:auto;",
+                    includeHTML("howto.html")
+                  )
+                )
               ),
               
               box(
@@ -3046,13 +3053,12 @@ ui <- dashboardPage(
   dashboardHeader(title = textOutput("dynamicTitle")),
   dashboardSidebar(width = 150,
                    sidebarMenu(id = "tabs", selected = "Tab6",
-                               menuItem("Home", tabName = "Tab6", icon = icon("th")),
-                               menuItem("Data Formats", tabName = "Tab4", icon = icon("th")),
-                               menuItem("Import Data", tabName = "Tab7", icon = icon("th")),
-                               menuItem("Tables", tabName = "Tab2", icon = icon("th")),
-                               menuItem("Network", tabName = "Tab1", icon = icon("dashboard")),
-                               menuItem("Export", tabName = "Tab3", icon = icon("th")),
-                               menuItem("Saved-views", tabName = "Tab5", icon = icon("th"))
+                               menuItem("Home",        tabName = "Tab6", icon = icon("home")),
+                               menuItem("Import Data", tabName = "Tab7", icon = icon("upload")),
+                               menuItem("Network",     tabName = "Tab1", icon = icon("project-diagram")),
+                               menuItem("Tables",      tabName = "Tab2", icon = icon("table")),
+                               menuItem("Export",      tabName = "Tab3", icon = icon("download")),
+                               menuItem("Saved Views", tabName = "Tab5", icon = icon("bookmark"))
                    )
   ),
   dashboardBody(
