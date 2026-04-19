@@ -26,7 +26,7 @@ http://localhost:3838
 ```
 
 ## Running via a web server
-The app is available following this link:(https://tanwir.shinyapps.io/multiomics-network-explorer/) 
+The app is available following this link:(https://wcmq.shinyapps.io/multiomicserver/) 
 
 ## Running the Dockerized Shiny App
 1. Pull the image from GitHub Container Registry:
