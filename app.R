@@ -583,14 +583,6 @@ server <- function(input, output, session) {
                        "If provided, it will be shown as the Home tab.")
               )
             )
-            
-            
-            
-            
-            
-            
-            
-            
           ),
       )
       )
@@ -627,25 +619,7 @@ server <- function(input, output, session) {
       file.copy(from = example_path, to = file, overwrite = TRUE)
     }
   )
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
+
   observe({
     req(myValues$fullnet, input$plat)
     if (input$plat == "ALL") {
@@ -872,26 +846,7 @@ server <- function(input, output, session) {
     selectInput("trait", "Select Trait:", choices = c("", trait_choices), selected = NULL)
   })
   
-  
-  # Debug trait selection
-  # observeEvent(input$trait, {
-  #   req(input$trait, myValues$fullnet)
-  #   debounce(reactive({
-  #     cat("input$trait changed to:", input$trait, "\n")
-  #     selected_traitid <- myValues$fullnet$nodes$TRAITID[
-  #       tolower(myValues$fullnet$nodes$id) == tolower(input$trait)
-  #     ]
-  #     if (length(selected_traitid) == 0) {
-  #       cat("No TRAITID found for input$trait:", input$trait, "\n")
-  #       showNotification("Selected trait not found in network.", type = "error")
-  #       return()
-  #     }
-  #     rv$selectedTrait <- input$trait
-  #     rv$pendingFocus <- selected_traitid
-  #     session$sendCustomMessage(type = "clearNodeSelection", message = list())
-  #     cat("Set rv$selectedTrait to:", input$trait, ", rv$pendingFocus to TRAITID:", selected_traitid, ", cleared input$current_node_selection\n")
-  #   }), 200)()
-  # })
+
   observeEvent(input$trait, {
     req(myValues$fullnet)
     cat("observeEvent input$trait triggered, input$trait:", input$trait, ", rv$selectedTrait:", rv$selectedTrait, ", input$current_node_selection:", input$current_node_selection, "\n")
@@ -925,10 +880,6 @@ server <- function(input, output, session) {
     # Trigger UI update
     networkTrigger(networkTrigger() + 1)
   })
-  
-  
-  
-  
   
   output$selectionStatus <- renderText({
     if (!is.null(input$current_node_selection) && length(input$current_node_selection) > 0) {
@@ -996,10 +947,6 @@ server <- function(input, output, session) {
     }
   })
   
-  
-  
-  
-  
   # Handle Update Network button
   observeEvent(input$updateNetworkBtn, {
     cat("updateNetworkBtn clicked, input$current_node_selection:", input$current_node_selection, 
@@ -1018,13 +965,7 @@ server <- function(input, output, session) {
     networkTrigger(networkTrigger() + 1)
     cat("Triggered network update, storage$focus:", storage$focus, "\n")
   })
-  
-  
-  
-  
-  
-  
-  
+
   observeEvent(input$confirmFocus, {
     removeModal()
     req(myValues$fullnet)
@@ -1056,29 +997,7 @@ server <- function(input, output, session) {
     }
     networkTrigger(networkTrigger() + 1)
   })
-  
-  
-  # Use Case Handlers/Now Views handler
-  # observeEvent(input$saveUseCaseBtn, {
-  #   if (!is.null(storage$subnet)) {
-  #     showModal(modalDialog(
-  #       title = "Save Use Case",
-  #       textInput("useCaseName", "Enter a name for this use case:",
-  #                 value = paste("Use Case", length(rv$useCases) + 1)),
-  #       footer = tagList(
-  #         modalButton("Cancel"),
-  #         actionButton("confirmSaveUseCase", "Save")
-  #       )
-  #     ))
-  #   } else {
-  #     showModal(modalDialog(
-  #       title = "Error",
-  #       "No network is selected to save.",
-  #       easyClose = TRUE
-  #     ))
-  #   }
-  # })
-  
+
   observeEvent(input$saveUseCaseBtn, {
     if (!is.null(storage$subnet)) {
       showModal(modalDialog(
@@ -1109,14 +1028,7 @@ server <- function(input, output, session) {
     }
   })
   
-  
-  # observeEvent(input$confirmSaveUseCase, {
-  #   req(input$useCaseName)
-  #   rv$useCases[[input$useCaseName]] <- storage$subnet
-  #   removeModal()
-  #   showNotification(paste("Saved use case:", input$useCaseName))
-  # })
-  
+
   observeEvent(input$confirmSaveUseCase, {
     req(input$useCaseName)
     
@@ -1132,16 +1044,6 @@ server <- function(input, output, session) {
     showNotification(paste("Saved view:", input$useCaseName))
   })
   
-  
-  # output$useCaseList <- renderUI({
-  #   if(length(rv$useCases) > 0) {
-  #     selectInput("selectedUseCase", "Select a saved use case:",
-  #                 choices = names(rv$useCases))
-  #   } else {
-  #     h4("No saved use cases.")
-  #   }
-  # })
-  
   output$useCaseList <- renderUI({
     if (length(rv$useCases) > 0) {
       selectInput(
@@ -1153,124 +1055,7 @@ server <- function(input, output, session) {
       h4("No saved views.")
     }
   })
-  
-  
-  # Load saved use-case
-  # observeEvent(input$loadUseCaseBtn, {
-  #   req(input$selectedUseCase)
-  #   saved_net <- rv$useCases[[input$selectedUseCase]]
-  #   if (!is.null(saved_net)) {
-  #     storage$subnet <- saved_net
-  #     edges_df <- data.frame(
-  #       from = saved_net$edges$from,
-  #       to = saved_net$edges$to,
-  #       title = saved_net$edges$title,
-  #       color = saved_net$edges$color,
-  #       width = saved_net$edges$width,
-  #       stringsAsFactors = FALSE
-  #     )
-  #     nodes_df <- data.frame(
-  #       id = saved_net$nodes$id,
-  #       label = saved_net$nodes$id,
-  #       title = saved_net$nodes$id,
-  #       color = saved_net$nodes$color,
-  #       shape = saved_net$nodes$shape,
-  #       stringsAsFactors = FALSE
-  #     )
-  #     nodes_df$size <- 25
-  #     storage$edges <- edges_df
-  #     storage$nodes <- nodes_df
-  #     
-  #     if (nrow(saved_net$nodes) > 0) {
-  #       focus_traitid <- saved_net$nodes$TRAITID[1]
-  #       storage$focus <- focus_traitid
-  #       cat("Set storage$focus to:", focus_traitid, "\n")
-  #       updateSelectInput(
-  #         session,
-  #         inputId = "trait",
-  #         selected = saved_net$nodes$id[1]
-  #       )
-  #     }
-  #     
-  #     rv$useCaseActive <- TRUE
-  #     rv$pendingFocus <- NULL
-  #     cat("Set rv$useCaseActive to TRUE, cleared rv$pendingFocus\n")
-  #     
-  #     networkTrigger(networkTrigger() + 1)
-  #     updateTabItems(session, "tabs", "Tab1")
-  #     showNotification(paste("Loaded use case:", input$selectedUseCase))
-  #   }
-  # })
-  
-  # observeEvent(input$loadUseCaseBtn, {
-  #   req(input$selectedUseCase)
-  #   saved_obj <- rv$useCases[[input$selectedUseCase]]
-  #   if (is.null(saved_obj)) return(NULL)
-  #   
-  #   # Detect old format vs new format
-  #   if (!is.null(saved_obj$nodes) && !is.null(saved_obj$edges)) {
-  #     # Old format: saved_obj is the subnet itself
-  #     saved_net <- saved_obj
-  #     saved_desc <- NULL
-  #   } else {
-  #     # New format: list(subnet = ..., description = ...)
-  #     saved_net  <- saved_obj$subnet
-  #     saved_desc <- saved_obj$description
-  #   }
-  #   
-  #   if (!is.null(saved_net)) {
-  #     storage$subnet <- saved_net
-  #     
-  #     edges_df <- data.frame(
-  #       from  = saved_net$edges$from,
-  #       to    = saved_net$edges$to,
-  #       title = saved_net$edges$title,
-  #       color = saved_net$edges$color,
-  #       width = saved_net$edges$width,
-  #       stringsAsFactors = FALSE
-  #     )
-  #     
-  #     nodes_df <- data.frame(
-  #       id    = saved_net$nodes$id,
-  #       label = saved_net$nodes$id,
-  #       title = saved_net$nodes$id,
-  #       color = saved_net$nodes$color,
-  #       shape = saved_net$nodes$shape,
-  #       stringsAsFactors = FALSE
-  #     )
-  #     nodes_df$size <- 25
-  #     
-  #     storage$edges <- edges_df
-  #     storage$nodes <- nodes_df
-  #     
-  #     if (nrow(saved_net$nodes) > 0) {
-  #       focus_traitid     <- saved_net$nodes$TRAITID[1]
-  #       storage$focus     <- focus_traitid
-  #       rv$pendingFocus   <- NULL
-  #       cat("Set storage$focus to:", focus_traitid, "\n")
-  #       
-  #       updateSelectInput(
-  #         session,
-  #         inputId  = "trait",
-  #         selected = saved_net$nodes$id[1]
-  #       )
-  #     }
-  #     
-  #     rv$useCaseActive <- TRUE
-  #     cat("Set rv$useCaseActive to TRUE, cleared rv$pendingFocus\n")
-  #     
-  #     networkTrigger(networkTrigger() + 1)
-  #     updateTabItems(session, "tabs", "Tab1")
-  #     
-  #     msg <- paste("Loaded view:", input$selectedUseCase)
-  #     if (!is.null(saved_desc) && nzchar(saved_desc)) {
-  #       msg <- paste0(msg, " - ", saved_desc)
-  #     }
-  #     showNotification(msg)
-  #   }
-  # })
-  # 
-  
+
   observeEvent(input$loadUseCaseBtn, {
     # 1) Prefer table selection, fallback to dropdown
     idx <- input$savedViewsTable_rows_selected
@@ -1414,19 +1199,7 @@ server <- function(input, output, session) {
     showNotification(msg)
   })
   
-  
-  
-  
-  # output$downloadUseCase <- downloadHandler(
-  #   filename = function() {
-  #     paste("use_case_", Sys.Date(), ".rds", sep = "")
-  #   },
-  #   content = function(file) {
-  #     req(storage$subnet)
-  #     saveRDS(storage$subnet, file)
-  #   }
-  # )
-  
+
   # Download current subnet (kept as-is; still called "use case" internally)
   output$downloadUseCase <- downloadHandler(
     filename = function() {
@@ -1438,51 +1211,7 @@ server <- function(input, output, session) {
     }
   )
   
-  # Load uploaded use-case
-  # observeEvent(input$uploadUseCase, {
-  #   req(input$uploadUseCase)
-  #   use_case <- readRDS(input$uploadUseCase$datapath)
-  #   storage$subnet <- use_case
-  #   edges_df <- data.frame(
-  #     from = use_case$edges$from,
-  #     to = use_case$edges$to,
-  #     title = use_case$edges$title,
-  #     color = use_case$edges$color,
-  #     width = use_case$edges$width,
-  #     stringsAsFactors = FALSE
-  #   )
-  #   nodes_df <- data.frame(
-  #     id = use_case$nodes$id,
-  #     label = use_case$nodes$id,
-  #     title = use_case$nodes$id,
-  #     color = use_case$nodes$color,
-  #     shape = use_case$nodes$shape,
-  #     stringsAsFactors = FALSE
-  #   )
-  #   nodes_df$size <- 25
-  #   storage$edges <- edges_df
-  #   storage$nodes <- nodes_df
-  #   
-  #   if (nrow(use_case$nodes) > 0) {
-  #     focus_traitid <- use_case$nodes$TRAITID[1]
-  #     storage$focus <- focus_traitid
-  #     cat("Set storage$focus to:", focus_traitid, "\n")
-  #     updateSelectInput(
-  #       session,
-  #       inputId = "trait",
-  #       selected = use_case$nodes$id[1]
-  #     )
-  #   }
-  #   
-  #   rv$useCaseActive <- TRUE
-  #   rv$pendingFocus <- NULL
-  #   cat("Set rv$useCaseActive to TRUE, cleared rv$pendingFocus\n")
-  #   
-  #   networkTrigger(networkTrigger() + 1)
-  #   updateTabItems(session, "tabs", "Tab1")
-  #   showNotification("Use case loaded successfully!")
-  # })
-  
+
   observeEvent(input$uploadUseCase, {
     req(input$uploadUseCase)
     use_case <- readRDS(input$uploadUseCase$datapath)
@@ -1586,20 +1315,7 @@ server <- function(input, output, session) {
     }
   })
   
-  
-  
-    
-  
-  # observeEvent(list(input$trait, input$plat, input$updateNetworkBtn), {
-  #   req(myValues$fullnet)
-  #   if (!is.null(input$trait) || !is.null(input$plat) || input$updateNetworkBtn > 0) {
-  #     rv$useCaseActive <- FALSE
-  #     cat("Set rv$useCaseActive to FALSE due to trait/platform change\n")
-  #     networkTrigger(networkTrigger() + 1)
-  #   }
-  # })
-  
-  
+
   # Custom Home Page
   persistentHomePath <- "www/custom_home.html"
   observeEvent(input$home_upload, {
@@ -1626,144 +1342,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # Dynamic Table for Customization
-  # output$dynamicTable <- renderDT({
-  #   req(myValues$fullnet)
-  #   list_items <- unique(myValues$fullnet$nodes$plat)
-  #   myValues$listItems <- list_items
-  #   data <- data.frame(
-  #     Item = list_items,
-  #     Shape = sapply(seq_along(list_items), function(i) {
-  #       platform <- list_items[i]
-  #       current <- if (!is.null(rv$customSelections[[platform]]$shape)) 
-  #         rv$customSelections[[platform]]$shape else "circle"
-  #       opts <- c("circle", "diamond", "star", "square", "triangle")
-  #       options_html <- paste(
-  #         sapply(opts, function(opt) {
-  #           if (opt == current) {
-  #             sprintf('<option value="%s" selected>%s</option>', opt, opt)
-  #           } else {
-  #             sprintf('<option value="%s">%s</option>', opt, opt)
-  #           }
-  #         }),
-  #         collapse = ""
-  #       )
-  #       sprintf('<select id="shape_%d">%s</select>', i, options_html)
-  #     }),
-  #     Color = sapply(seq_along(list_items), function(i) {
-  #       platform <- list_items[i]
-  #       current <- if (!is.null(rv$customSelections[[platform]]$color)) 
-  #         rv$customSelections[[platform]]$color else "Red"
-  #       opts <- c("Red", "Green", "Blue", "Purple", "Grey", "Yellow", "Golden", "Pink", "Black")
-  #       options_html <- paste(
-  #         sapply(opts, function(opt) {
-  #           if (opt == current) {
-  #             sprintf('<option value="%s" selected>%s</option>', opt, opt)
-  #           } else {
-  #             sprintf('<option value="%s">%s</option>', opt, opt)
-  #           }
-  #         }),
-  #         collapse = ""
-  #       )
-  #       sprintf('<select id="color_%d">%s</select>', i, options_html)
-  #     }),
-  #     stringsAsFactors = FALSE
-  #   )
-  #   datatable(
-  #     data,
-  #     escape = FALSE,
-  #     rownames = FALSE,
-  #     options = list(
-  #       dom = 't',
-  #       paging = FALSE,
-  #       drawCallback = JS("function(settings) {
-  #         Shiny.unbindAll(this.api().table().node());
-  #         Shiny.bindAll(this.api().table().node());
-  #       }")
-  #     )
-  #   )
-  # }, server = FALSE)
 
-  # output$dynamicTable <- renderDT({
-  #   req(myValues$fullnet)
-  #   
-  #   list_items <- unique(myValues$fullnet$nodes$plat)
-  #   myValues$listItems <- list_items
-  #   
-  #   shape_opts_all <- c("circle", "diamond", "star", "square", "triangle")
-  #   shape_defaults <- setdiff(shape_opts_all, "circle")  # default pool (no circle)
-  #   
-  #   color_opts_all <- c("Red", "Green", "Blue", "Purple",
-  #                       "Grey", "Yellow", "Golden", "Pink", "Black")
-  #   
-  #   data <- data.frame(
-  #     #Item = list_items,
-  #     Platform = list_items,
-  #     Shape = sapply(seq_along(list_items), function(i) {
-  #       platform <- list_items[i]
-  #       
-  #       # use saved selection if present, else stable random (no circle)
-  #       current <- if (!is.null(rv$customSelections[[platform]]$shape)) {
-  #         rv$customSelections[[platform]]$shape
-  #       } else {
-  #         stable_pick(platform, shape_defaults)
-  #       }
-  #       
-  #       options_html <- paste(
-  #         sapply(shape_opts_all, function(opt) {
-  #           if (opt == current) {
-  #             sprintf('<option value="%s" selected>%s</option>', opt, opt)
-  #           } else {
-  #             sprintf('<option value="%s">%s</option>', opt, opt)
-  #           }
-  #         }),
-  #         collapse = ""
-  #       )
-  #       sprintf('<select id="shape_%d">%s</select>', i, options_html)
-  #     }),
-  #     
-  #     Color = sapply(seq_along(list_items), function(i) {
-  #       platform <- list_items[i]
-  #       
-  #       current <- if (!is.null(rv$customSelections[[platform]]$color)) {
-  #         rv$customSelections[[platform]]$color
-  #       } else {
-  #         stable_pick(platform, color_opts_all)
-  #       }
-  #       
-  #       options_html <- paste(
-  #         sapply(color_opts_all, function(opt) {
-  #           if (opt == current) {
-  #             sprintf('<option value="%s" selected>%s</option>', opt, opt)
-  #           } else {
-  #             sprintf('<option value="%s">%s</option>', opt, opt)
-  #           }
-  #         }),
-  #         collapse = ""
-  #       )
-  #       sprintf('<select id="color_%d">%s</select>', i, options_html)
-  #     }),
-  #     stringsAsFactors = FALSE
-  #   )
-  #   
-  #   datatable(
-  #     data,
-  #     escape = FALSE,
-  #     rownames = FALSE,
-  #     options = list(
-  #       dom = 't',
-  #       paging = FALSE,
-  #       drawCallback = JS("
-  #       function(settings) {
-  #         Shiny.unbindAll(this.api().table().node());
-  #         Shiny.bindAll(this.api().table().node());
-  #       }
-  #     ")
-  #     )
-  #   )
-  # }, server = FALSE)
-  
-  
   observe({
     req(myValues$fullnet)
     req(myValues$fullnet$nodes)
@@ -1859,20 +1438,6 @@ server <- function(input, output, session) {
     )
     
 
-    # datatable(
-    #   data,
-    #   class = "table table-striped table-hover",
-    #   escape = FALSE,
-    #   rownames = FALSE,
-    #   options = list(
-    #     dom = 't',
-    #     paging = FALSE,
-    #     info = FALSE,
-    #     ordering = FALSE
-    #   ),
-    #   colnames = c("Platform (count)", "Shape", "Color")
-    # )
-    
     datatable(
       data,
       class = "table table-striped table-hover",
@@ -1891,53 +1456,9 @@ server <- function(input, output, session) {
       "),
       colnames = c("Platform (count)", "Shape", "Color")
     )
-    
-    
   })
   
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
+
   ###########
   observe({
     req(myValues$listItems)
@@ -1960,8 +1481,6 @@ server <- function(input, output, session) {
     }
   })
   
-  
-  
   output$SHEETlist <- renderUI({
     if (!is.null(myValues$allSheets)) {
       tagList(
@@ -1983,32 +1502,7 @@ server <- function(input, output, session) {
     nodes = NULL
   )
   
-  # Table row selection
-  # observeEvent(input$submitInfo, {
-  #   req(myValues$datalist)
-  #   activeSheet <- input$sheetTabs
-  #   if (!is.null(activeSheet)) {
-  #     selected <- input[[paste0(activeSheet, "table_rows_selected")]]
-  #     if (!is.null(selected) && length(selected) == 1) {
-  #       sheetData <- myValues$datalist[[activeSheet]]
-  #       focus_ids <- sheetData$from[selected]
-  #       valid_ids <- focus_ids[tolower(focus_ids) %in% tolower(myValues$fullnet$nodes$TRAITID)]
-  #       if (length(valid_ids) > 0) {
-  #         storage$focus <- valid_ids
-  #         networkTrigger(networkTrigger() + 1)
-  #         updateTabItems(session, "tabs", "Tab1")
-  #         cat("Set storage$focus to:", valid_ids, "and triggered network update\n")
-  #       } else {
-  #         showNotification("Selected trait not found in network.", type = "error")
-  #         cat("No valid TRAITID found for table selection\n")
-  #       }
-  #     } else {
-  #       showNotification("Please select exactly one row in the table.", type = "warning")
-  #       cat("Invalid table row selection\n")
-  #     }
-  #   }
-  # })
-  
+
   observeEvent(input$submitInfo, {
     req(myValues$datalist, myValues$fullnet)
     activeSheet <- input$sheetTabs
@@ -2042,7 +1536,6 @@ server <- function(input, output, session) {
       }
     }
   })
-  
   
   
   # Network rendering (degree neighbors + static layout for big graphs)
@@ -2532,12 +2025,32 @@ server <- function(input, output, session) {
     disp_pairs <- paste(disp_ed$from,   disp_ed$to,   sep = "|||")
     show_pairs <- sub_pairs[keep]
 
-    update_df <- data.frame(
+    edge_update <- data.frame(
       id     = disp_ed$id,
       hidden = !(disp_pairs %in% show_pairs),
       stringsAsFactors = FALSE
     )
-    visNetworkProxy("network") %>% visUpdateEdges(edges = update_df)
+
+    # Hide nodes that have no remaining visible edges (isolated after filter)
+    visible_pairs <- disp_pairs[disp_pairs %in% show_pairs]
+    visible_nodes <- unique(c(
+      disp_ed$from[disp_pairs %in% show_pairs],
+      disp_ed$to[disp_pairs %in% show_pairs]
+    ))
+    # Always keep the focus node visible
+    focus_id <- storage$nodes$id[tolower(storage$nodes$id) == tolower(storage$focus)]
+    if (length(focus_id) == 0) focus_id <- character(0)
+    visible_nodes <- union(visible_nodes, focus_id)
+
+    node_update <- data.frame(
+      id     = storage$nodes$id,
+      hidden = !(storage$nodes$id %in% visible_nodes),
+      stringsAsFactors = FALSE
+    )
+
+    visNetworkProxy("network") %>%
+      visUpdateEdges(edges = edge_update) %>%
+      visUpdateNodes(nodes = node_update)
   }, ignoreInit = TRUE)
 
   # ── Shortest path ──────────────────────────────────────────────────────────
@@ -2643,25 +2156,6 @@ server <- function(input, output, session) {
   })
 
 
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
   # Network table
   output$tbl.networktable <- DT::renderDataTable({
     req(storage$edges, storage$nodes, storage$focus)
@@ -2873,11 +2367,7 @@ server <- function(input, output, session) {
     processClicked(TRUE)
   })
   
-  
-  
-  
-  
-  
+
   output$tabs <- renderUI({
     req(myValues$datalist)
     sheets_ok <- myValues$sheets_ok
@@ -2955,10 +2445,7 @@ server <- function(input, output, session) {
     session$sendCustomMessage("change_skin", input$skin_color)
   })
   
-  # output$networkTableTitle <- renderUI({
-  #   req(input$current_node_selection)
-  #   h4(paste("Associations for", input$current_node_selection))
-  # })
+
   output$networkTableTitle <- renderUI({
     cat("Rendering networkTableTitle, storage$focus:", storage$focus, ", input$current_node_selection:", input$current_node_selection, "\n")
     if (!is.null(storage$focus)) {
@@ -3022,24 +2509,6 @@ server <- function(input, output, session) {
     filename = function() paste0("network_data_", Sys.Date(), ".xlsx"),
     content  = function(file) writexl::write_xlsx(buildExcelDownload(), path = file)
   )
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
 }
 
 # ====================================================
@@ -3420,55 +2889,6 @@ ui <- dashboardPage(
               )
       ),
       tabItem(tabName = "Tab7",
-              # fluidPage(
-              #   fluidRow(
-              #     column(width = 2,
-              #            selectInput("skin_color", "Change Skin Color", 
-              #                        c("red", "purple", "green", "blue", "yellow"))
-              #     ),
-              #     column(width = 2,
-              #            textInput("titleInput", "Enter Server Title:", "Multi-omics Server")
-              #     )
-              #   ),
-              #   fluidRow(
-              #     column(width = 4,
-              #            box(width = 12,
-              #                fileInput('file_in', 'Choose Excel File with required sheets',
-              #                          accept = c(".xlsx"), multiple = FALSE),
-              #                textOutput("summary1"),
-              #                textOutput("summary3"),
-              #                uiOutput("summary2"),
-              #                hr(),
-              #                DTOutput("dynamicTable"),
-              #                hr(),
-              #                uiOutput("SHEETlist"),
-              #                uiOutput("confirm_btn"),
-              #                uiOutput("downloadButtonUI"),
-              #                actionButton("clearData", "Clear Saved Data", class = "clear-data-btn")
-              #            )
-              #     ),
-              #     column(width = 5,
-              #            uiOutput("SAMPLEtable")
-              #     )
-              #   ),
-              #   fluidRow(
-              #     column(width = 2,
-              #            uiOutput("mySelection")
-              #     )
-              #   ),
-              #   fluidRow(
-              #     column(4, 
-              #            fileInput("homePageFile", 
-              #                      "Upload Custom Home Page (HTML or Markdown)", 
-              #                      accept = c(".html", ".md"))
-              #     )
-              #   ),
-              #   fluidRow(
-              #     column(12, 
-              #            helpText("Upload a custom HTML or Markdown file. The file will be rendered automatically in the Home tab. If nothing is uploaded, a default image is shown.")
-              #     )
-              #   ) 
-              # )
               fluidPage(
                 uiOutput("importControls"),
                 
