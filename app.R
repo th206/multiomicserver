@@ -72,8 +72,14 @@ processExcelSheet <- function(inFile, sheet, mand_cols, anno_cols, custom_cols) 
       has_w <- any(c("BETA","COR") %in% names(data))
 
       if (!has_p && has_w) {
-        data$PVALUE <- 0.05
-        warnings <- c(warnings, "PVALUE column not found; defaulting to 0.05 for all edges.")
+        wcol_tmp <- intersect(c("BETA","COR"), names(data))
+        cor_vals <- suppressWarnings(as.numeric(as.character(data[[wcol_tmp[1]]])))
+        cor_vals[is.na(cor_vals)] <- 0
+        data$PVALUE <- pmax(1 - abs(cor_vals), 1e-6)
+        warnings <- c(warnings, sprintf(
+          "No PVALUE column; %s values used for edge thickness (higher score = thicker edge).",
+          wcol_tmp[1]
+        ))
       }
       if (has_p && !has_w) {
         data$BETA <- 1
@@ -160,12 +166,13 @@ processExcelFile <- function(inFile) {
       if (!"id" %in% names(data)) data$id <- paste0(sheet, "_", seq_len(nrow(data)))
 
       df <- data.frame(
-        to     = trimws(as.character(data[["TRAITID1"]])),
-        from   = trimws(as.character(data[["TRAITID2"]])),
-        pvalue = pval,
-        weight = weight,
-        id     = as.character(data[["id"]]),
-        type   = sheet,
+        to           = trimws(as.character(data[["TRAITID1"]])),
+        from         = trimws(as.character(data[["TRAITID2"]])),
+        pvalue       = pval,
+        weight       = weight,
+        weight_label = if (length(wcol)) tolower(wcol[1]) else "beta",
+        id           = as.character(data[["id"]]),
+        type         = sheet,
         stringsAsFactors = FALSE
       )
 
@@ -301,8 +308,17 @@ constructNetwork <- function(datalist, anno, custom) {
     TRAITID = unique(sort(c(all_edges$from, all_edges$to, anno$TRAITID))),
     stringsAsFactors = FALSE
   )
-  
-  all_nodes <- dplyr::left_join(all_nodes, anno, by = "TRAITID") %>%
+
+  # Case-insensitive join: edge TRAITIDs and ANNO TRAITIDs may differ by case
+  anno_keyed <- anno %>%
+    dplyr::mutate(.key = tolower(TRAITID)) %>%
+    dplyr::distinct(.key, .keep_all = TRUE) %>%
+    dplyr::select(.key, SHORTNAME, PLAT)
+
+  all_nodes <- all_nodes %>%
+    dplyr::mutate(.key = tolower(TRAITID)) %>%
+    dplyr::left_join(anno_keyed, by = ".key") %>%
+    dplyr::select(-.key) %>%
     dplyr::mutate(
       SHORTNAME = dplyr::if_else(is.na(SHORTNAME) | SHORTNAME == "", TRAITID, SHORTNAME),
       PLAT      = dplyr::if_else(is.na(PLAT) | PLAT == "", "Unknown", PLAT)
@@ -359,7 +375,8 @@ constructNetwork <- function(datalist, anno, custom) {
     all_edges$type, ": ",
     all_edges$from_id, " -> ", all_edges$to_id,
     ", p=", formatC(all_edges$pvalue, format = "e", digits = 2),
-    ", beta=", round(all_edges$beta, 3)
+    ", ", if ("weight_label" %in% names(all_edges)) all_edges$weight_label else "beta",
+    "=", round(all_edges$beta, 3)
   )
   
   all_edges$color <- ifelse(all_edges$sign > 0, "blue", "red")
@@ -404,8 +421,6 @@ constructNetwork <- function(datalist, anno, custom) {
     all_nodes$color <- default_colors[all_nodes$plat]
     all_nodes$shape <- default_shapes[all_nodes$plat]
   }
-  
-  all_nodes$group <- all_nodes$plat
   
   list(edges = all_edges, nodes = all_nodes)
 }
@@ -1103,31 +1118,35 @@ server <- function(input, output, session) {
       sign_vec <- if ("sign" %in% edge_cols) saved_net$edges$sign else rep(1, nrow(saved_net$edges))
       
       edges_df <- data.frame(
-        from  = as.character(saved_net$edges[[from_col]]),
-        to    = as.character(saved_net$edges[[to_col]]),
-        title = paste(
+        from       = as.character(saved_net$edges[[from_col]]),
+        to         = as.character(saved_net$edges[[to_col]]),
+        title      = paste(
           as.character(saved_net$edges[[from_col]]),
           "->",
           as.character(saved_net$edges[[to_col]])
         ),
-        color = ifelse(sign_vec > 0, "blue", "red"),
-        width = rep(1, nrow(saved_net$edges)),
+        color      = ifelse(sign_vec > 0, "blue", "red"),
+        width      = rep(1, nrow(saved_net$edges)),
+        assoc_type = if ("type" %in% edge_cols) as.character(saved_net$edges$type) else rep("Edge", nrow(saved_net$edges)),
         stringsAsFactors = FALSE
       )
       
       if (all(c("pvalue", "weight") %in% edge_cols)) {
+        type_vec <- if ("type" %in% edge_cols) as.character(saved_net$edges$type) else rep("Edge", nrow(saved_net$edges))
+        beta_vec <- if ("beta" %in% edge_cols) saved_net$edges$beta else saved_net$edges$weight
+        wlbl_vec <- if ("weight_label" %in% edge_cols) saved_net$edges$weight_label else rep("beta", nrow(saved_net$edges))
         edges_df$title <- sprintf(
-          "GGM_OLINK: %s->%s, p=%.2e, beta=%.3f",
+          paste0("%s: %s->%s, p=%.2e, ", wlbl_vec, "=%.3f"),
+          type_vec,
           as.character(saved_net$edges[[from_col]]),
           as.character(saved_net$edges[[to_col]]),
           saved_net$edges$pvalue,
-          saved_net$edges$weight
+          beta_vec
         )
       }
       
-      edges_df <- dplyr::distinct(edges_df, from, to, .keep_all = TRUE)
     }
-    
+
     nodes_raw <- saved_net$nodes
     n <- nrow(nodes_raw)
     
@@ -1318,6 +1337,8 @@ server <- function(input, output, session) {
 
   # Custom Home Page
   persistentHomePath <- "www/custom_home.html"
+  homePageVersion <- reactiveVal(0)   # bumped on upload; drives re-render without polling
+
   observeEvent(input$home_upload, {
     if (!is.null(input$home_upload)) {
       ext <- tools::file_ext(input$home_upload$name)
@@ -1330,11 +1351,12 @@ server <- function(input, output, session) {
           fragment.only = TRUE)
         writeLines(html_content, persistentHomePath)
       }
+      homePageVersion(homePageVersion() + 1)   # trigger home page re-render
     }
   })
-  
+
   output$customHomePage <- renderUI({
-    invalidateLater(1000, session)
+    homePageVersion()   # reactive dependency — only re-renders on upload, not every second
     if (file.exists(persistentHomePath)) {
       includeHTML(persistentHomePath)
     } else {
@@ -1538,6 +1560,13 @@ server <- function(input, output, session) {
   })
   
   
+  # Degree slider: re-trigger network render when user changes the dropdown.
+  # This MUST be a separate observer — renderVisNetwork uses isolate(input$maxnodes)
+  # to break the direct dependency, so we need this observer to bridge the gap.
+  observeEvent(input$maxnodes, {
+    if (!is.null(input$maxnodes)) networkTrigger(networkTrigger() + 1)
+  }, ignoreInit = TRUE)
+
   # Network rendering (degree neighbors + static layout for big graphs)
   output$network <- renderVisNetwork({
     networkTrigger()
@@ -1599,8 +1628,9 @@ server <- function(input, output, session) {
       }
       label[label == ""] <- as.character(nodes_df$id)
       nodes_df$label <- label
-      nodes_df$title <- nodes_df$label
-      
+      nodes_df$title <- paste0("<b>", nodes_df$label, "</b><br>",
+                               nodes_df$id, "<br>Platform: ", nodes_df$plat)
+
       nodes_df$shape <- sapply(nodes_df$plat, function(p) rv$customSelections[[p]]$shape)
       nodes_df$color.background <- sapply(nodes_df$plat, function(p) rv$customSelections[[p]]$color)
       
@@ -1637,8 +1667,11 @@ server <- function(input, output, session) {
     }
     
     ## --- inputs/state -----------------------------------------------------------
-    # input$maxnodes is now "degree"
-    deg_input <- suppressWarnings(as.integer(input$maxnodes))
+    # Use isolate() to break the direct reactive dependency on input$maxnodes.
+    # The dedicated observeEvent(input$maxnodes, ...) above handles user changes.
+    # Without isolate, updateSelectInput("maxnodes", ...) inside this render would
+    # re-invalidate input$maxnodes and trigger an infinite render loop.
+    deg_input <- suppressWarnings(as.integer(isolate(input$maxnodes)))
     if (is.na(deg_input) || deg_input < 1) deg_input <- 1
     
     nodes_df <- NULL
@@ -1691,13 +1724,26 @@ server <- function(input, output, session) {
           from_chr = as.character(.data[[from_col]]),
           to_chr   = as.character(.data[[to_col]])
         )
-      
+
+      # Structural edges: used only for igraph degree computation.
+      # DISGENET is always an overlay type and is unconditionally excluded here,
+      # regardless of the filterTypes checkbox. The checkbox controls display only.
+      all_types <- if ("type" %in% names(edges_all)) unique(edges_all$type) else character(0)
+      selected_types <- isolate(input$filterTypes)
+      if (is.null(selected_types) && length(all_types) > 0)
+        selected_types <- all_types[!grepl("^DISGENET$", all_types, ignore.case = TRUE)]
+      else if (!is.null(selected_types))
+        selected_types <- selected_types[!grepl("^DISGENET$", selected_types, ignore.case = TRUE)]
+      edges_structural <- if (length(selected_types) > 0 && "type" %in% names(edges_all))
+        edges_all %>% dplyr::filter(type %in% selected_types)
+      else edges_all %>% dplyr::filter(!grepl("^DISGENET$", type, ignore.case = TRUE))
+
       # --- igraph distances ------------------------------------------------------
       res <- tryCatch({
         g <- igraph::graph_from_data_frame(
           d = data.frame(
-            from = edges_all$from_chr,
-            to   = edges_all$to_chr,
+            from = edges_structural$from_chr,
+            to   = edges_structural$to_chr,
             stringsAsFactors = FALSE
           ),
           directed = FALSE,
@@ -1763,14 +1809,48 @@ server <- function(input, output, session) {
         )
       }
       
-      # nodes within chosen degree (includes focus at distance 0)
+      # nodes within chosen degree (structural edges only — includes focus at distance 0)
       keep_nodes <- names(dists)[dists <= chosen_deg]
-      
-      subnet_nodes <- nodes_all %>%
-        dplyr::filter(id %in% keep_nodes)
-      
-      subnet_edges <- edges_all %>%
+
+      # Structural subnet edges: both endpoints must be structural nodes
+      subnet_edges_struct <- edges_all %>%
+        dplyr::filter(!grepl("^DISGENET$", type, ignore.case = TRUE)) %>%
         dplyr::filter(from_chr %in% keep_nodes & to_chr %in% keep_nodes)
+
+      # Overlay edges (DISGENET): gene endpoint must be a structural node
+      is_disgenet_checked <- isTRUE("DISGENET" %in% isolate(input$filterTypes))
+      subnet_edges_overlay <- if (is_disgenet_checked) {
+        edges_all %>%
+          dplyr::filter(grepl("^DISGENET$", type, ignore.case = TRUE)) %>%
+          dplyr::filter(from_chr %in% keep_nodes | to_chr %in% keep_nodes)
+      } else {
+        edges_all[0, ]  # empty frame with same structure
+      }
+
+      # Disease nodes introduced by overlay edges (not already structural nodes)
+      overlay_node_ids <- unique(c(
+        subnet_edges_overlay$from_chr[!subnet_edges_overlay$from_chr %in% keep_nodes],
+        subnet_edges_overlay$to_chr[!subnet_edges_overlay$to_chr %in% keep_nodes]
+      ))
+
+      # Hard cap: if DISGENET would add too many disease nodes, drop it and warn
+      overlay_cap <- 800L
+      if (length(overlay_node_ids) > overlay_cap) {
+        showNotification(
+          paste0(
+            "DisGeNET would add ", length(overlay_node_ids), " disease nodes ",
+            "(limit: ", overlay_cap, "). Use the |Beta| min slider to pre-filter ",
+            "by COR score, then re-focus the network."
+          ),
+          type = "error", duration = 12
+        )
+        subnet_edges_overlay <- edges_all[0, ]
+        overlay_node_ids     <- character(0)
+      }
+
+      subnet_edges <- rbind(subnet_edges_struct, subnet_edges_overlay)
+      subnet_nodes <- nodes_all %>%
+        dplyr::filter(id %in% c(keep_nodes, overlay_node_ids))
       
       subnet <- list(nodes = subnet_nodes, edges = subnet_edges)
       storage$subnet <- subnet
@@ -1785,27 +1865,31 @@ server <- function(input, output, session) {
       } else {
         sign_vec <- if ("sign" %in% edge_cols_sub) subnet$edges$sign else rep(1, nrow(subnet$edges))
         edges_df <- data.frame(
-          from  = as.character(subnet$edges[[from_col_sub]]),
-          to    = as.character(subnet$edges[[to_col_sub]]),
-          title = paste(
+          from       = as.character(subnet$edges[[from_col_sub]]),
+          to         = as.character(subnet$edges[[to_col_sub]]),
+          title      = paste(
             as.character(subnet$edges[[from_col_sub]]),
             "->",
             as.character(subnet$edges[[to_col_sub]])
           ),
-          color = ifelse(sign_vec > 0, "blue", "red"),
-          width = rep(normal_width, nrow(subnet$edges)),
+          color      = ifelse(sign_vec > 0, "blue", "red"),
+          width      = rep(normal_width, nrow(subnet$edges)),
+          assoc_type = if ("type" %in% edge_cols_sub) as.character(subnet$edges$type) else rep("Edge", nrow(subnet$edges)),
           stringsAsFactors = FALSE
         )
         if (all(c("pvalue", "weight") %in% edge_cols_sub)) {
+          type_vec <- if ("type" %in% edge_cols_sub) as.character(subnet$edges$type) else rep("Edge", nrow(subnet$edges))
+          beta_vec <- if ("beta" %in% edge_cols_sub) subnet$edges$beta else subnet$edges$weight
+          wlbl_vec <- if ("weight_label" %in% edge_cols_sub) subnet$edges$weight_label else rep("beta", nrow(subnet$edges))
           edges_df$title <- sprintf(
-            "GGM_OLINK: %s->%s, p=%.2e, beta=%.3f",
+            paste0("%s: %s->%s, p=%.2e, ", wlbl_vec, "=%.3f"),
+            type_vec,
             as.character(subnet$edges[[from_col_sub]]),
             as.character(subnet$edges[[to_col_sub]]),
             subnet$edges$pvalue,
-            subnet$edges$weight
+            beta_vec
           )
         }
-        edges_df <- dplyr::distinct(edges_df, from, to, .keep_all = TRUE)
       }
       # Add explicit sequential IDs so visNetworkProxy can reference edges by ID
       if (nrow(edges_df) > 0) edges_df$id <- seq_len(nrow(edges_df))
@@ -1827,8 +1911,9 @@ server <- function(input, output, session) {
       }
       label[label == ""] <- as.character(nodes_df$id)
       nodes_df$label <- label
-      nodes_df$title <- nodes_df$label
-      
+      nodes_df$title <- paste0("<b>", nodes_df$label, "</b><br>",
+                               nodes_df$id, "<br>Platform: ", nodes_df$plat)
+
       nodes_df$size        <- ifelse(tolower(nodes_df$id) == tolower(focus_id), focus_size, normal_size)
       nodes_df$borderWidth <- ifelse(tolower(nodes_df$id) == tolower(focus_id), focus_border, normal_border)
       
@@ -1842,7 +1927,8 @@ server <- function(input, output, session) {
       valid_nodes <- nodes_df$id
       edges_df <- edges_df %>%
         dplyr::filter(from %in% valid_nodes & to %in% valid_nodes)
-      
+
+      nodes_df$group <- NULL
       storage$nodes <- nodes_df
       storage$edges <- edges_df
     }
@@ -1936,17 +2022,37 @@ server <- function(input, output, session) {
       error = function(e) NULL
     )
     if (is.null(g)) return()
-    comm  <- igraph::cluster_louvain(g)
-    n_comm <- max(igraph::membership(comm))
-    # generate distinguishable palette
+    comm       <- igraph::cluster_louvain(g)
+    membership <- igraph::membership(comm)
+
+    # suppress communities smaller than 3 nodes — colour them neutral grey
+    min_size   <- 3L
+    comm_sizes <- table(membership)
+    large_ids  <- as.integer(names(comm_sizes[comm_sizes >= min_size]))
+    # re-index large communities 1..k for palette assignment
+    comm_map   <- setNames(seq_along(large_ids), large_ids)
+    n_comm     <- length(large_ids)
+
     pal <- if (n_comm <= 8) {
-      c("#e41a1c","#377eb8","#4daf4a","#984ea3","#ff7f00","#a65628","#f781bf","#999999")
+      c("#e41a1c","#377eb8","#4daf4a","#984ea3","#ff7f00","#a65628","#f781bf","#2b8cbe")
     } else {
       grDevices::rainbow(n_comm)
     }
-    cols <- pal[igraph::membership(comm)]
+
+    cols <- ifelse(
+      membership %in% large_ids,
+      pal[comm_map[as.character(membership)]],
+      "#cccccc"   # grey for small/singleton communities
+    )
     names(cols) <- igraph::V(g)$name
     communityColors(cols)
+
+    n_small <- sum(!membership %in% large_ids)
+    showNotification(
+      paste0("Found ", n_comm, " communities (≥3 nodes). ",
+             n_small, " node(s) in small communities shown in grey."),
+      type = "message", duration = 5
+    )
 
     # update visNetwork in place - no full re-render
     visNetworkProxy("network") %>%
@@ -1972,6 +2078,10 @@ server <- function(input, output, session) {
       visUnselectAll()
   })
 
+  observeEvent(input$fitNetworkBtn, {
+    visNetworkProxy("network") %>% visFit()
+  })
+
   # ── Update filter slider ranges when subnet changes ────────────────────────
   observe({
     req(storage$subnet)
@@ -1992,11 +2102,13 @@ server <- function(input, output, session) {
 
   # ── Edge type filter (checkboxes, rendered from available types) ───────────
   output$edgeTypeFilter <- renderUI({
-    req(storage$subnet)
-    types <- unique(storage$subnet$edges$type)
+    req(myValues$fullnet)
+    types <- sort(unique(myValues$fullnet$edges$type))
     if (length(types) == 0) return(NULL)
     checkboxGroupInput("filterTypes", "Edge Types",
-                       choices = types, selected = types, inline = FALSE)
+                       choices = types,
+                       selected = types[!grepl("^DISGENET$", types, ignore.case = TRUE)],
+                       inline = FALSE)
   })
 
   # ── Apply p-value / beta / type filters via proxy (no re-render) ──────────
@@ -2011,31 +2123,27 @@ server <- function(input, output, session) {
     beta_thresh <- input$filterBeta
     types_keep  <- input$filterTypes
 
-    # Determine which subnet edges pass the filters
-    keep <- rep(TRUE, nrow(sub_ed))
+    # Determine which display edges pass all filters
+    # pval/beta filters: match via subnet rows (same row order as disp_ed)
+    keep <- rep(TRUE, nrow(disp_ed))
     if (!is.null(pval_thresh) && pval_thresh > 0 && "pvalue" %in% names(sub_ed))
       keep <- keep & (-log10(pmax(sub_ed$pvalue, 1e-300)) >= pval_thresh)
     if (!is.null(beta_thresh) && beta_thresh > 0 && "weight" %in% names(sub_ed))
       keep <- keep & (sub_ed$weight >= beta_thresh)
-    if (!is.null(types_keep) && "type" %in% names(sub_ed))
-      keep <- keep & (sub_ed$type %in% types_keep)
-
-    # Match subnet rows to display edge rows by from/to pair
-    sub_pairs  <- paste(sub_ed$from_id, sub_ed$to_id, sep = "|||")
-    disp_pairs <- paste(disp_ed$from,   disp_ed$to,   sep = "|||")
-    show_pairs <- sub_pairs[keep]
+    # type filter: use assoc_type stored directly in display edges (handles multi-edges correctly)
+    if (!is.null(types_keep) && "assoc_type" %in% names(disp_ed))
+      keep <- keep & (disp_ed$assoc_type %in% types_keep)
 
     edge_update <- data.frame(
       id     = disp_ed$id,
-      hidden = !(disp_pairs %in% show_pairs),
+      hidden = !keep,
       stringsAsFactors = FALSE
     )
 
     # Hide nodes that have no remaining visible edges (isolated after filter)
-    visible_pairs <- disp_pairs[disp_pairs %in% show_pairs]
     visible_nodes <- unique(c(
-      disp_ed$from[disp_pairs %in% show_pairs],
-      disp_ed$to[disp_pairs %in% show_pairs]
+      disp_ed$from[keep],
+      disp_ed$to[keep]
     ))
     # Always keep the focus node visible
     focus_id <- storage$nodes$id[tolower(storage$nodes$id) == tolower(storage$focus)]
@@ -2150,9 +2258,9 @@ server <- function(input, output, session) {
     )
   })
 
-  # ── PNG download via visNetwork export ────────────────────────────────────
+  # ── PNG download via custom message handler (visExport incompatible with proxy) ───
   observeEvent(input$downloadPngBtn, {
-    visNetworkProxy("network") %>% visExport(type = "png", name = "network_export")
+    session$sendCustomMessage("downloadNetworkPng", "network_export.png")
   })
 
 
@@ -2215,7 +2323,7 @@ server <- function(input, output, session) {
         tolower(from) %in% tolower(selected_ids) |
           tolower(to) %in% tolower(selected_ids)
       ) %>% 
-      dplyr::distinct(from, to, .keep_all = TRUE)
+      dplyr::distinct(from, to, type, .keep_all = TRUE)
     
     if (nrow(filtered_edges) > 0) {
       cat("Filtered edges for selected node:\n")
@@ -2583,6 +2691,21 @@ ui <- dashboardPage(
           console.log('forceServerClearNodeSelection completed');
         });
 
+        Shiny.addCustomMessageHandler('downloadNetworkPng', function(filename) {
+          var container = document.getElementById('network');
+          if (!container) { console.warn('downloadNetworkPng: #network not found'); return; }
+          var canvas = container.querySelector('canvas');
+          if (!canvas) { console.warn('downloadNetworkPng: canvas not found inside #network'); return; }
+          try {
+            var link = document.createElement('a');
+            link.download = filename;
+            link.href = canvas.toDataURL('image/png');
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+          } catch(e) { console.error('downloadNetworkPng error:', e); }
+        });
+
         // Warn before accidental page refresh / tab close
         window.addEventListener('beforeunload', function(e) {
           e.preventDefault();
@@ -2761,6 +2884,8 @@ ui <- dashboardPage(
                          actionButton("communityBtn",  "Color by Community", class = "btn btn-default",
                                       style = "margin-top:4px; width:100%;"),
                          actionButton("resetColorBtn", "Reset Colors",       class = "btn btn-default",
+                                      style = "margin-top:4px; width:100%;"),
+                         actionButton("fitNetworkBtn", "Fit to Window",      class = "btn btn-default",
                                       style = "margin-top:4px; width:100%;")
                   )
                 ),

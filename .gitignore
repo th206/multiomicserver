@@ -1,12 +1,20 @@
-# User-uploaded content (should never be committed)
-www/custom_home.html
-
-# Shiny-specific
-*.Rproj
-.Rproj.user/
+# R session files
 .Rhistory
 .RData
-.Ruserdata/
-# General
-*.log
-*.DS_Store
+*.Rproj.user/
+
+# macOS
+.DS_Store
+
+# Session-specific Shiny state (not part of the app)
+data.rds
+custom_settings.rds
+
+# Temporary Office/Excel lock files
+~$*
+
+# Deployment config (shinyapps.io)
+rsconnect/
+
+# Backup/scratch files
+*copy*.xlsx
