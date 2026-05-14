@@ -1,5 +1,6 @@
 # Base image with R and Shiny Server
-FROM rocker/shiny:4.2.3
+# Platform pinned to linux/amd64 — rocker/shiny does not publish arm64 manifests
+FROM --platform=linux/amd64 rocker/shiny:4.2.3
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
