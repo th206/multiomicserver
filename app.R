@@ -752,7 +752,9 @@ server <- function(input, output, session) {
           choices = traitlist,
           selected = traitlist[1]
         )
-        rv$selectedTrait <- traitlist[1]
+        # Do NOT pre-set rv$selectedTrait here — doing so would block the trait
+        # observer when the user manually selects traitlist[1], because the guard
+        # checks rv$selectedTrait == input$trait and returns early.
       }, error = function(e) {
         cat("Error updating trait dropdown in processedData:", e$message, "\n")
         showNotification(paste("Error updating trait dropdown:", e$message), type = "error")
@@ -864,36 +866,32 @@ server <- function(input, output, session) {
 
   observeEvent(input$trait, {
     req(myValues$fullnet)
-    cat("observeEvent input$trait triggered, input$trait:", input$trait, ", rv$selectedTrait:", rv$selectedTrait, ", input$current_node_selection:", input$current_node_selection, "\n")
-    if (is.null(input$trait) || input$trait == "" || (!is.null(rv$selectedTrait) && input$trait == rv$selectedTrait)) {
-      cat("Skipping input$trait update: empty, unchanged, or invalid, input$trait:", input$trait, ", rv$selectedTrait:", rv$selectedTrait, "\n")
-      return()
-    }
-    cat("Processing input$trait:", input$trait, "\n")
+    if (is.null(input$trait) || input$trait == "") return()
+    # Skip only when this trait is already staged as the pending focus — not merely
+    # because rv$selectedTrait happens to match (which fires spuriously on init).
+    if (!is.null(rv$pendingFocus) && !is.null(rv$selectedTrait) &&
+        input$trait == rv$selectedTrait) return()
+
     selected_traitid <- myValues$fullnet$nodes$TRAITID[
       tolower(myValues$fullnet$nodes$id) == tolower(input$trait)
     ]
     if (length(selected_traitid) == 0) {
-      cat("No TRAITID found for input$trait:", input$trait, "\n")
       showNotification("Selected trait not found in network.", type = "error")
       return()
     }
     rv$selectedTrait <- input$trait
-    rv$pendingFocus <- selected_traitid
-    storage$focus <- NULL # Clear current focus
-    storage$subnet <- NULL # Clear network
-    storage$nodes <- NULL
-    storage$edges <- NULL
-    rv$useCaseActive <- FALSE # Reset use case
-    # Clear node selection to prioritize dropdown
+    rv$pendingFocus  <- selected_traitid
+    storage$focus  <- NULL
+    storage$subnet <- NULL
+    storage$nodes  <- NULL
+    storage$edges  <- NULL
+    rv$useCaseActive <- FALSE
     session$sendCustomMessage(type = "clearNodeSelection", message = list())
     session$sendCustomMessage(type = "forceClearNodeSelection", message = list())
-    # Add a slight delay to ensure client-side update
     session$sendCustomMessage(type = "forceClearNodeSelectionDelayed", message = list(delay = 100))
-    cat("Set rv$selectedTrait to:", input$trait, ", rv$pendingFocus to TRAITID:", selected_traitid, 
-        ", cleared storage$focus, storage$subnet, storage$nodes, storage$edges, rv$useCaseActive, and input$current_node_selection\n")
-    # Trigger UI update
-    networkTrigger(networkTrigger() + 1)
+    # Do NOT bump networkTrigger here — output$updateNetworkLabel reacts to
+    # rv$pendingFocus automatically; triggering a full render before the focus
+    # button is pressed causes a spurious "no active trait" notification.
   })
   
   output$selectionStatus <- renderText({
@@ -1663,7 +1661,7 @@ server <- function(input, output, session) {
           deselectNode = "function(p){Shiny.onInputChange('current_node_selection', []);}",
           click        = "function(p){Shiny.onInputChange('click', p.nodes[0]);}"
         ) %>%
-        visInteraction(navigationButtons = FALSE)
+        visInteraction(navigationButtons = TRUE)
     }
     
     ## --- inputs/state -----------------------------------------------------------
@@ -1946,7 +1944,7 @@ server <- function(input, output, session) {
     use_hierarchical <- (layout_choice == "hierarchical")
 
     # For large graphs OR user picked a static layout: precompute with igraph
-    use_static <- n_nodes > 150 || layout_choice %in% c("fr", "kk", "circle")
+    use_static <- n_nodes > 150 || layout_choice %in% c("fr", "kk", "circle", "bipartite")
     if (use_static && !use_hierarchical && nrow(edges_df) > 0) {
       g_sub <- igraph::graph_from_data_frame(
         d = data.frame(from = as.character(edges_df$from),
@@ -1959,6 +1957,23 @@ server <- function(input, output, session) {
       lay <- switch(layout_choice,
         "kk"     = igraph::layout_with_kk(g_sub),
         "circle" = igraph::layout_in_circle(g_sub),
+        "bipartite" = {
+          v_names <- igraph::V(g_sub)$name
+          focus_v  <- which(v_names == focus_id)
+          if (length(focus_v) == 0) focus_v <- 1L
+          raw_d <- igraph::distances(g_sub, v = focus_v)[1, ]
+          raw_d[is.infinite(raw_d)] <- max(raw_d[is.finite(raw_d)], na.rm = TRUE) + 1
+          x_pos <- raw_d * 400
+          y_pos <- numeric(length(raw_d))
+          for (d in sort(unique(raw_d))) {
+            idx     <- which(raw_d == d)
+            n_at_d  <- length(idx)
+            y_pos[idx] <- seq(-(n_at_d - 1) * 120 / 2,
+                               (n_at_d - 1) * 120 / 2,
+                               length.out = n_at_d)
+          }
+          cbind(x_pos, y_pos)
+        },
         igraph::layout_with_fr(g_sub)   # default: fr
       )
       nodes_df$x <- lay[, 1] * 200
@@ -1977,7 +1992,7 @@ server <- function(input, output, session) {
                font    = list(size = 16)) %>%
       visEdges(smooth = TRUE) %>%
       visOptions(nodesIdSelection = FALSE, highlightNearest = FALSE) %>%
-      visInteraction(navigationButtons = FALSE)
+      visInteraction(navigationButtons = TRUE)
 
     if (use_hierarchical) {
       net <- net %>%
@@ -2076,10 +2091,6 @@ server <- function(input, output, session) {
         stringsAsFactors = FALSE
       )) %>%
       visUnselectAll()
-  })
-
-  observeEvent(input$fitNetworkBtn, {
-    visNetworkProxy("network") %>% visFit()
   })
 
   # ── Update filter slider ranges when subnet changes ────────────────────────
@@ -2875,7 +2886,7 @@ ui <- dashboardPage(
                          selectInput("layoutChoice", "Layout",
                                      choices = c("Force-directed" = "fr",
                                                  "Kamada-Kawai"  = "kk",
-                                                 "Circle"        = "circle",
+                                                 "Bipartite"     = "bipartite",
                                                  "Hierarchical"  = "hierarchical"),
                                      selected = "fr")
                   ),
@@ -2884,8 +2895,6 @@ ui <- dashboardPage(
                          actionButton("communityBtn",  "Color by Community", class = "btn btn-default",
                                       style = "margin-top:4px; width:100%;"),
                          actionButton("resetColorBtn", "Reset Colors",       class = "btn btn-default",
-                                      style = "margin-top:4px; width:100%;"),
-                         actionButton("fitNetworkBtn", "Fit to Window",      class = "btn btn-default",
                                       style = "margin-top:4px; width:100%;")
                   )
                 ),
