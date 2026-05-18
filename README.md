@@ -26,7 +26,8 @@ http://localhost:3838
 ```
 
 ## Running via a web server
-The app is available following this link:(https://wcmq.shinyapps.io/multiomicserver/) 
+The app is available following this link:(https://wcmq.shinyapps.io/multiomicserver/).
+Note: This app runs on a free server and may sleep after a period of inactivity. If the page is unresponsive, wait 30–60 seconds for it to wake up. You will loose your work if you refresh the page. 
 
 ## Running the Dockerized Shiny App
 1. Pull the image from GitHub Container Registry:
