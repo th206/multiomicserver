@@ -746,15 +746,40 @@ server <- function(input, output, session) {
       cat("Initial last few traits:", paste(tail(traitlist, 5), collapse = ", "), "\n")
       # cat("Initial is Vitamin_D in traitlist?", "Vitamin_D" %in% traitlist, "\n")
       tryCatch({
+        # Pick the first structural (non-DISGENET) node for auto-render so the
+        # Network tab is never blank. Compute auto_trait BEFORE updateSelectInput
+        # so the dropdown, rv$selectedTrait, and storage$focus all agree — this
+        # prevents the trait observer from firing and clearing storage$focus.
+        structural_nodes <- fullnet$nodes[
+          !grepl("^DISGENET$", fullnet$nodes$plat, ignore.case = TRUE), ]
+        auto_ids    <- sort(as.character(structural_nodes$id))
+        auto_trait  <- if (length(auto_ids) > 0) auto_ids[1] else traitlist[1]
+        first_traitid <- fullnet$nodes$TRAITID[
+          tolower(fullnet$nodes$id) == tolower(auto_trait)]
+
         updateSelectInput(
           session,
           "trait",
-          choices = traitlist,
-          selected = traitlist[1]
+          choices  = traitlist,
+          selected = auto_trait        # match auto_trait so trait observer guard fires
         )
-        # Do NOT pre-set rv$selectedTrait here — doing so would block the trait
-        # observer when the user manually selects traitlist[1], because the guard
-        # checks rv$selectedTrait == input$trait and returns early.
+
+        if (length(first_traitid) == 1) {
+          rv$selectedTrait <- auto_trait
+          rv$pendingFocus  <- first_traitid
+          storage$focus    <- first_traitid
+          storage$subnet   <- NULL
+          storage$nodes    <- NULL
+          storage$edges    <- NULL
+          networkTrigger(networkTrigger() + 1)
+        }
+
+        # Populate path target selectize with all nodes (server-side streaming —
+        # browser only fetches matches as the user types, no 21k-item download)
+        updateSelectizeInput(session, "pathTarget",
+          choices = c("(select)" = "", sort(as.character(fullnet$nodes$id))),
+          server  = TRUE)
+
       }, error = function(e) {
         cat("Error updating trait dropdown in processedData:", e$message, "\n")
         showNotification(paste("Error updating trait dropdown:", e$message), type = "error")
@@ -1767,22 +1792,33 @@ server <- function(input, output, session) {
       
       dists <- res$dists
       
-      # If focus has no neighbors
+      # If focus has no structural neighbors, only bail out early if DISGENET
+      # is also not checked or has no edges for this node. Otherwise fall through
+      # so the overlay code can add disease connections.
       if (!length(dists) || all(dists == 0)) {
-        return(render_focus_only(focus_id))
+        is_disgenet_checked <- isTRUE("DISGENET" %in% isolate(input$filterTypes))
+        has_disgenet_edges  <- is_disgenet_checked &&
+          any((edges_all$from_chr == focus_id | edges_all$to_chr == focus_id) &
+              grepl("^DISGENET$", edges_all$type, ignore.case = TRUE))
+        if (!has_disgenet_edges) return(render_focus_only(focus_id))
+        # Isolated structurally but has DISGENET edges — keep dists as-is and
+        # force max_deg to 1 so the degree UI stays sensible.
+        dists <- setNames(0L, focus_id)
       }
-      
-      max_deg <- max(dists)
-      
+
+      # max_deg: at least 1 so that 1:max_deg is well-defined when node is
+      # structurally isolated but has DISGENET overlay connections.
+      max_deg <- max(max(dists), 1L)
+
       # clamp selected degree
       if (deg_input > max_deg) deg_input <- max_deg
-      
+
       # cumulative node counts within degree <= d
-      total_by_deg <- sapply(1:max_deg, function(d) sum(dists <= d))
-      
+      total_by_deg <- sapply(seq_len(max_deg), function(d) sum(dists <= d))
+
       # Update dropdown labels: "d (nNodes)"
-      choices_vec <- as.character(1:max_deg)
-      names(choices_vec) <- paste0(1:max_deg, " (", total_by_deg, ")")
+      choices_vec <- as.character(seq_len(max_deg))
+      names(choices_vec) <- paste0(seq_len(max_deg), " (", total_by_deg, ")")
       
       updateSelectInput(
         session,
@@ -2003,10 +2039,12 @@ server <- function(input, output, session) {
                   click        = vis_events$click)
     } else if (use_static || n_nodes > 150) {
       net <- net %>%
-        visPhysics(enabled = FALSE) %>%
+        visPhysics(enabled = n_nodes <= 50,
+                   stabilization = list(enabled = TRUE, iterations = 200)) %>%
         visEvents(selectNode   = vis_events$selectNode,
                   deselectNode = vis_events$deselectNode,
-                  click        = vis_events$click)
+                  click        = vis_events$click,
+                  stabilized   = "function(){this.setOptions({physics:{enabled:false}});}")
     } else {
       net <- net %>%
         visLayout(randomSeed = 4711) %>%
@@ -2022,6 +2060,7 @@ server <- function(input, output, session) {
 
   # ── Community detection state ──────────────────────────────────────────────
   communityColors <- reactiveVal(NULL)   # named vector: node id -> color
+  communityData   <- reactiveVal(NULL)   # data frame for download
 
   observeEvent(input$communityBtn, {
     req(storage$nodes, storage$edges)
@@ -2062,6 +2101,24 @@ server <- function(input, output, session) {
     names(cols) <- igraph::V(g)$name
     communityColors(cols)
 
+    # Build downloadable table: node | label | platform | community | color
+    comm_df <- data.frame(
+      node_id   = igraph::V(g)$name,
+      community = ifelse(membership %in% large_ids,
+                         comm_map[as.character(membership)], NA_integer_),
+      color     = unname(cols),
+      stringsAsFactors = FALSE
+    )
+    comm_df <- dplyr::left_join(
+      comm_df,
+      storage$nodes %>% dplyr::select(id, label, plat) %>%
+        dplyr::rename(node_id = id, platform = plat),
+      by = "node_id"
+    ) %>% dplyr::select(node_id, label, platform, community, color) %>%
+      dplyr::arrange(community, node_id)
+    communityData(comm_df)
+    shinyjs::show("downloadCommunitiesBtn")
+
     n_small <- sum(!membership %in% large_ids)
     showNotification(
       paste0("Found ", n_comm, " communities (≥3 nodes). ",
@@ -2079,9 +2136,19 @@ server <- function(input, output, session) {
     showNotification(paste("Found", n_comm, "communities."), type = "message", duration = 4)
   })
 
+  output$downloadCommunitiesBtn <- downloadHandler(
+    filename = function() paste0("communities_", storage$focus, "_", Sys.Date(), ".csv"),
+    content  = function(file) {
+      req(communityData())
+      write.csv(communityData(), file, row.names = FALSE)
+    }
+  )
+
   observeEvent(input$resetColorBtn, {
     req(storage$nodes)
     communityColors(NULL)
+    communityData(NULL)
+    shinyjs::hide("downloadCommunitiesBtn")
     visNetworkProxy("network") %>%
       visUpdateNodes(nodes = data.frame(
         id           = storage$nodes$id,
@@ -2173,62 +2240,74 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
 
   # ── Shortest path ──────────────────────────────────────────────────────────
-  output$pathTargetUI <- renderUI({
-    req(storage$nodes)
-    selectInput("pathTarget", "Path target node",
-                choices = c("(select)" = "", sort(storage$nodes$id)),
-                selected = "")
-  })
+  # pathTargetUI is now a server-side selectizeInput populated on data load.
+  # (old renderUI removed — choices streamed on demand to avoid 21k-item dropdown lag)
 
   observeEvent(input$findPathBtn, {
-    req(storage$nodes, storage$edges, storage$focus, input$pathTarget)
-    if (input$pathTarget == "") {
-      showNotification("Please select a target node.", type = "warning"); return()
+    req(myValues$fullnet, storage$focus, input$pathTarget)
+    if (is.null(input$pathTarget) || input$pathTarget == "") {
+      showNotification("Please type and select a target node.", type = "warning"); return()
     }
-    # Resolve focus TRAITID -> display id (robust to missing TRAITID column)
-    if ("TRAITID" %in% names(storage$nodes)) {
-      focus_id <- storage$nodes$id[tolower(storage$nodes$TRAITID) == tolower(storage$focus)]
-    } else {
-      focus_id <- storage$nodes$id[tolower(storage$nodes$id) == tolower(storage$focus)]
-    }
-    if (length(focus_id) == 0) focus_id <- as.character(storage$focus[1])
-    target_id <- input$pathTarget
 
-    ed <- storage$edges
-    if (nrow(ed) == 0) { showNotification("No edges in current view.", type = "warning"); return() }
+    nodes_full <- myValues$fullnet$nodes %>% dplyr::mutate(id = as.character(id))
 
-    g <- tryCatch(
-      igraph::graph_from_data_frame(ed[, c("from","to")], directed = FALSE,
-                                    vertices = data.frame(name = storage$nodes$id)),
+    # Resolve source: storage$focus is a TRAITID
+    focus_id <- nodes_full$id[tolower(nodes_full$TRAITID) == tolower(storage$focus)]
+    if (length(focus_id) == 0) focus_id <- nodes_full$id[tolower(nodes_full$id) == tolower(storage$focus)]
+    if (length(focus_id) == 0) { showNotification("Source node not found.", type = "warning"); return() }
+    focus_id  <- as.character(focus_id[1])
+    target_id <- as.character(input$pathTarget)
+
+    # Build structural graph on FULL network (DISGENET excluded — not structural)
+    edges_full <- myValues$fullnet$edges %>%
+      dplyr::filter(!grepl("^DISGENET$", type, ignore.case = TRUE)) %>%
+      dplyr::mutate(from_chr = as.character(from_id), to_chr = as.character(to_id))
+
+    g_full <- tryCatch(
+      igraph::graph_from_data_frame(
+        d        = data.frame(from = edges_full$from_chr, to = edges_full$to_chr,
+                              stringsAsFactors = FALSE),
+        directed = FALSE,
+        vertices = data.frame(name = nodes_full$id, stringsAsFactors = FALSE)
+      ),
       error = function(e) NULL
     )
-    if (is.null(g)) return()
+    if (is.null(g_full)) { showNotification("Could not build network graph.", type = "warning"); return() }
 
     path_nodes <- tryCatch({
-      p <- igraph::shortest_paths(g, from = focus_id, to = target_id, output = "vpath")
-      igraph::V(g)$name[p$vpath[[1]]]
+      p <- igraph::shortest_paths(g_full, from = focus_id, to = target_id, output = "vpath")
+      igraph::V(g_full)$name[p$vpath[[1]]]
     }, error = function(e) character(0))
 
     if (length(path_nodes) == 0) {
-      showNotification("No path found between selected nodes.", type = "warning"); return()
+      showNotification(paste("No path found between", focus_id, "and", target_id, "in the full network."),
+                       type = "warning"); return()
     }
 
-    # Highlight path nodes (bold border) and select them in visNetwork
-    all_nodes <- storage$nodes
-    visNetworkProxy("network") %>%
-      visUpdateNodes(nodes = data.frame(
-        id          = all_nodes$id,
-        borderWidth = ifelse(all_nodes$id %in% path_nodes, 5, 1),
-        color.border = ifelse(all_nodes$id %in% path_nodes, "#FF6600", "#848484"),
-        stringsAsFactors = FALSE
-      )) %>%
-      visSelectNodes(id = path_nodes)
-
     showNotification(
-      paste("Path length:", length(path_nodes) - 1, "hops -",
-            paste(path_nodes, collapse = " -> ")),
-      type = "message", duration = 8
+      paste0("Path (", length(path_nodes) - 1, " hops): ", paste(path_nodes, collapse = " -> ")),
+      type = "message", duration = 10
     )
+
+    # Render path as its own subnet view
+    path_nodes_df <- nodes_full %>%
+      dplyr::filter(id %in% path_nodes) %>%
+      dplyr::mutate(
+        label       = dplyr::if_else(is.na(label) | label == "", id, label),
+        title       = paste0("<b>", label, "</b><br>", id, "<br>Platform: ", plat),
+        size        = ifelse(id == focus_id, 30, 22),
+        borderWidth = ifelse(id == focus_id | id == target_id, 4, 2)
+      )
+
+    path_edges_raw <- edges_full %>%
+      dplyr::filter(from_chr %in% path_nodes & to_chr %in% path_nodes)
+
+    storage$subnet  <- list(nodes = path_nodes_df, edges = path_edges_raw)
+    storage$nodes   <- path_nodes_df
+    storage$edges   <- data.frame(from = path_edges_raw$from_chr, to = path_edges_raw$to_chr,
+                                  stringsAsFactors = FALSE)
+    rv$useCaseActive <- TRUE
+    networkTrigger(networkTrigger() + 1)
   })
 
   # ── Node statistics panel ──────────────────────────────────────────────────
@@ -2334,7 +2413,8 @@ server <- function(input, output, session) {
         tolower(from) %in% tolower(selected_ids) |
           tolower(to) %in% tolower(selected_ids)
       ) %>% 
-      dplyr::distinct(from, to, type, .keep_all = TRUE)
+      { if ("type" %in% names(.)) dplyr::distinct(., from, to, type, .keep_all = TRUE)
+        else dplyr::distinct(., from, to, .keep_all = TRUE) }
     
     if (nrow(filtered_edges) > 0) {
       cat("Filtered edges for selected node:\n")
@@ -2479,10 +2559,10 @@ server <- function(input, output, session) {
       saveRDS(list(customSelections = rv$customSelections), custom_settings_file)
       cat("Saved data to", data_file, "and settings to", custom_settings_file, "\n")
       
-      incProgress(1, detail = "Switching to Tables tab...")
+      incProgress(1, detail = "Switching to Network tab...")
       Sys.sleep(1)
     })
-    updateTabItems(session, "tabs", "Tab2")
+    updateTabItems(session, "tabs", "Tab1")
     processClicked(TRUE)
   })
   
@@ -2895,7 +2975,12 @@ ui <- dashboardPage(
                          actionButton("communityBtn",  "Color by Community", class = "btn btn-default",
                                       style = "margin-top:4px; width:100%;"),
                          actionButton("resetColorBtn", "Reset Colors",       class = "btn btn-default",
-                                      style = "margin-top:4px; width:100%;")
+                                      style = "margin-top:4px; width:100%;"),
+                         shinyjs::hidden(
+                           downloadButton("downloadCommunitiesBtn", "Download Communities",
+                                          class = "btn btn-success btn-sm",
+                                          style = "margin-top:4px; width:100%;")
+                         )
                   )
                 ),
 
@@ -2918,7 +3003,10 @@ ui <- dashboardPage(
                                uiOutput("edgeTypeFilter")
                         ),
                         column(width = 3,
-                               uiOutput("pathTargetUI"),
+                               selectizeInput("pathTarget", "Path to (full network)",
+                                              choices = NULL,
+                                              options = list(placeholder = "type to search...",
+                                                             maxOptions = 10L)),
                                actionButton("findPathBtn", "Find Shortest Path",
                                             class = "btn btn-info btn-sm",
                                             style = "margin-top:4px;")
