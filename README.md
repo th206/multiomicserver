@@ -86,7 +86,7 @@ Users can:
    - Drag nodes to rearrange the layout.
    - Click a node to show connected traits in the table below.
 
-Here is a screenshots of the server:
+Here are few screenshots of the server:
 ![My Image](www/about2.jpg)
 ![My Image](www/banner.png)
 
