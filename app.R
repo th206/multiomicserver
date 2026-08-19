@@ -242,13 +242,47 @@ processExcelFile <- function(inFile) {
                        "No ANNO sheet found. All nodes assigned to platform 'Unknown'. Add a sheet with TRAITID, SHORTNAME, PLAT columns to customise node appearance.")
   }
 
-  list(datalist    = datalist,
-       rawSheets   = rawSheets,
-       sheets_ok   = sheets_ok,
-       sheets_flag = sheets_flag,
-       sheets_warn = sheets_warn,
-       anno        = anno,
-       custom      = custom)
+  # Detect input mismatch: edge TRAITIDs not covered by ANNO (structured, not a flat warning)
+  mismatch_info <- NULL
+  if (anno_provided && length(datalist) > 0) {
+    all_edge_raw   <- unique(unlist(lapply(datalist, function(df) c(df$from, df$to))))
+    all_edge_lower <- tolower(all_edge_raw)
+    anno_lower     <- tolower(anno$TRAITID)
+    unmatched_lower <- setdiff(all_edge_lower, anno_lower)
+
+    if (length(unmatched_lower) > 0) {
+      # Recover original-case versions
+      idx_map        <- match(unmatched_lower, all_edge_lower)
+      unmatched_orig <- all_edge_raw[idx_map]
+
+      # Random sample of examples (up to 5) so the user sees variety
+      n_show     <- min(5, length(unmatched_orig))
+      sample_ids <- sample(unmatched_orig, n_show)
+
+      # Which sheet(s) do unmatched IDs come from?
+      sheet_sources <- list()
+      for (sh in names(datalist)) {
+        sh_lower  <- tolower(c(datalist[[sh]]$from, datalist[[sh]]$to))
+        n_from_sh <- sum(unmatched_lower %in% sh_lower)
+        if (n_from_sh > 0) sheet_sources[[sh]] <- n_from_sh
+      }
+
+      mismatch_info <- list(
+        n_unmatched   = length(unmatched_lower),
+        sheet_sources = sheet_sources,
+        sample_ids    = sample_ids
+      )
+    }
+  }
+
+  list(datalist      = datalist,
+       rawSheets     = rawSheets,
+       sheets_ok     = sheets_ok,
+       sheets_flag   = sheets_flag,
+       sheets_warn   = sheets_warn,
+       anno          = anno,
+       custom        = custom,
+       mismatch_info = mismatch_info)
 }
 
 
@@ -452,6 +486,7 @@ server <- function(input, output, session) {
     sheets_ok = NULL,
     sheets_flag = NULL,
     sheets_warn = NULL,
+    mismatch_info = NULL,
     anno = NULL,
     custom = NULL,
     fullnet = NULL,
@@ -671,8 +706,9 @@ server <- function(input, output, session) {
     myValues$fullnet <- NULL
     myValues$sheets_ok <- NULL
     myValues$allSheets <- NULL
-    myValues$sheets_flag <- NULL
-    myValues$sheets_warn <- NULL
+    myValues$sheets_flag  <- NULL
+    myValues$sheets_warn  <- NULL
+    myValues$mismatch_info <- NULL
     myValues$anno <- NULL
     myValues$custom <- NULL
     myValues$platlist <- NULL
@@ -696,9 +732,10 @@ server <- function(input, output, session) {
       myValues$rawSheets   <- result$rawSheets
       myValues$sheets_ok   <- result$sheets_ok
       myValues$allSheets   <- result$sheets_ok
-      myValues$sheets_flag <- result$sheets_flag
-      myValues$sheets_warn <- result$sheets_warn
-      myValues$anno        <- result$anno
+      myValues$sheets_flag  <- result$sheets_flag
+      myValues$sheets_warn  <- result$sheets_warn
+      myValues$mismatch_info <- result$mismatch_info
+      myValues$anno         <- result$anno
       myValues$custom      <- result$custom
       cat("Uploaded datalist sheets:", paste(names(result$datalist), collapse = ", "), "\n")
 
@@ -811,9 +848,10 @@ server <- function(input, output, session) {
   })
 
   output$sheetReport <- renderUI({
-    ok   <- myValues$sheets_ok
-    flag <- myValues$sheets_flag
-    warn <- myValues$sheets_warn
+    ok       <- myValues$sheets_ok
+    flag     <- myValues$sheets_flag
+    warn     <- myValues$sheets_warn
+    mismatch <- myValues$mismatch_info
     if (is.null(ok) && is.null(flag)) return(NULL)
 
     items <- list()
@@ -857,6 +895,64 @@ server <- function(input, output, session) {
         tags$ul(
           style = "margin:0 0 6px 16px; padding:0; list-style:disc;",
           lapply(warn, function(msg) tags$li(msg))
+        )
+      ))
+    }
+
+    # --- Input mismatch: prominent diagnostic block ---
+    if (!is.null(mismatch)) {
+      source_str <- paste(
+        mapply(function(sh, n) sprintf("%s (%d IDs)", sh, n),
+               names(mismatch$sheet_sources),
+               unlist(mismatch$sheet_sources),
+               SIMPLIFY = TRUE),
+        collapse = ", "
+      )
+      n_remaining <- mismatch$n_unmatched - length(mismatch$sample_ids)
+
+      items <- c(items, list(
+        tags$div(
+          style = paste(
+            "margin-top:10px; padding:10px 14px; border-radius:6px;",
+            "background:#fff3e0; border-left:4px solid #e65100; font-size:12px;"
+          ),
+          tags$div(
+            style = "font-weight:700; color:#bf360c; margin-bottom:6px; font-size:13px;",
+            icon("exclamation-triangle"),
+            sprintf(" Input Mismatch: %d trait ID(s) have no ANNO entry",
+                    mismatch$n_unmatched)
+          ),
+          tags$p(
+            style = "margin:0 0 8px 0;",
+            tags$b("Where:"), sprintf(" %s.", source_str), " ",
+            "These IDs exist in your association sheet(s) but are absent from your ANNO sheet, ",
+            "so they cannot be assigned to a platform and will display as ",
+            tags$b("'Unknown'"), ", which may obscure your network's biological meaning."
+          ),
+          tags$div(
+            style = "margin-bottom:8px;",
+            tags$b("A few examples of missing IDs: "),
+            tags$code(paste(mismatch$sample_ids, collapse = ", ")),
+            if (n_remaining > 0)
+              tags$span(style = "color:#777;",
+                        sprintf(" … and %d more.", n_remaining))
+            else NULL
+          ),
+          tags$div(style = "font-weight:600; margin-bottom:4px;", "How to fix:"),
+          tags$ol(
+            style = "margin:0 0 0 16px;",
+            tags$li(
+              tags$b("Add missing traits to your ANNO sheet (recommended):"),
+              " For each unmatched ID, add a row with the correct ",
+              tags$code("TRAITID"), ", ", tags$code("SHORTNAME"), ", and ",
+              tags$code("PLAT"), " values."
+            ),
+            tags$li(
+              tags$b("Filter your association sheet:"),
+              " Remove rows where either ", tags$code("TRAITID1"), " or ",
+              tags$code("TRAITID2"), " is not present in your ANNO sheet."
+            )
+          )
         )
       ))
     }
@@ -1730,7 +1826,7 @@ server <- function(input, output, session) {
       }
       
       focus_id <- find_focus_id(act_trait)
-      validate(need(length(focus_id) == 1, paste("Focus node not found for", act_trait)))
+      shiny::validate(need(length(focus_id) == 1, paste("Focus node not found for", act_trait)))
       focus_id <- as.character(focus_id)
       
       # Make sure IDs are characters everywhere
