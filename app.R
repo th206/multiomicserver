@@ -783,14 +783,30 @@ server <- function(input, output, session) {
       cat("Initial last few traits:", paste(tail(traitlist, 5), collapse = ", "), "\n")
       # cat("Initial is Vitamin_D in traitlist?", "Vitamin_D" %in% traitlist, "\n")
       tryCatch({
-        # Pick the first structural (non-DISGENET) node for auto-render so the
-        # Network tab is never blank. Compute auto_trait BEFORE updateSelectInput
+        # Pick a compact structural node for the initial auto-render so the
+        # Network tab loads quickly. Compute auto_trait BEFORE updateSelectInput
         # so the dropdown, rv$selectedTrait, and storage$focus all agree — this
         # prevents the trait observer from firing and clearing storage$focus.
         structural_nodes <- fullnet$nodes[
           !grepl("^DISGENET$", fullnet$nodes$plat, ignore.case = TRUE), ]
-        auto_ids    <- sort(as.character(structural_nodes$id))
-        auto_trait  <- if (length(auto_ids) > 0) auto_ids[1] else traitlist[1]
+        auto_ids <- sort(as.character(structural_nodes$id))
+        # Prefer a node whose structural edge count sits in a 3–12 "sweet spot"
+        # so the initial network isn't blank (≥3) or overwhelming (≤12).
+        auto_trait <- if (length(auto_ids) > 0) {
+          struct_ed <- fullnet$edges[
+            !grepl("^DISGENET$", fullnet$edges$type, ignore.case = TRUE), ]
+          ec <- tolower(names(struct_ed))
+          fc <- names(struct_ed)[ec == "from_id"][1]
+          tc <- names(struct_ed)[ec == "to_id"][1]
+          if (!is.na(fc) && !is.na(tc)) {
+            ep  <- c(as.character(struct_ed[[fc]]), as.character(struct_ed[[tc]]))
+            deg <- sort(table(ep[ep %in% auto_ids]))
+            ok  <- names(deg)[deg >= 3 & deg <= 12]
+            if (length(ok) > 0) ok[1]
+            else if (length(deg) > 0) names(deg)[which.min(deg)]
+            else auto_ids[1]
+          } else auto_ids[1]
+        } else traitlist[1]
         first_traitid <- fullnet$nodes$TRAITID[
           tolower(fullnet$nodes$id) == tolower(auto_trait)]
 
@@ -811,11 +827,7 @@ server <- function(input, output, session) {
           networkTrigger(networkTrigger() + 1)
         }
 
-        # Populate path target selectize with all nodes (server-side streaming —
-        # browser only fetches matches as the user types, no 21k-item download)
-        updateSelectizeInput(session, "pathTarget",
-          choices = c("(select)" = "", sort(as.character(fullnet$nodes$id))),
-          server  = TRUE)
+        # pathTarget choices are populated reactively when storage$nodes changes
 
       }, error = function(e) {
         cat("Error updating trait dropdown in processedData:", e$message, "\n")
@@ -1947,15 +1959,13 @@ server <- function(input, output, session) {
         dplyr::filter(!grepl("^DISGENET$", type, ignore.case = TRUE)) %>%
         dplyr::filter(from_chr %in% keep_nodes & to_chr %in% keep_nodes)
 
-      # Overlay edges (DISGENET): gene endpoint must be a structural node
+      # Overlay edges (DISGENET): only for the focus/seed node (star pattern).
+      # Always loaded regardless of checkbox state so the checkbox can show/hide
+      # via visUpdateEdges proxy without requiring a full re-render.
       is_disgenet_checked <- isTRUE("DISGENET" %in% isolate(input$filterTypes))
-      subnet_edges_overlay <- if (is_disgenet_checked) {
-        edges_all %>%
-          dplyr::filter(grepl("^DISGENET$", type, ignore.case = TRUE)) %>%
-          dplyr::filter(from_chr %in% keep_nodes | to_chr %in% keep_nodes)
-      } else {
-        edges_all[0, ]  # empty frame with same structure
-      }
+      subnet_edges_overlay <- edges_all %>%
+        dplyr::filter(grepl("^DISGENET$", type, ignore.case = TRUE)) %>%
+        dplyr::filter(from_chr == focus_id | to_chr == focus_id)
 
       # Disease nodes introduced by overlay edges (not already structural nodes)
       overlay_node_ids <- unique(c(
@@ -2023,6 +2033,10 @@ server <- function(input, output, session) {
       }
       # Add explicit sequential IDs so visNetworkProxy can reference edges by ID
       if (nrow(edges_df) > 0) edges_df$id <- seq_len(nrow(edges_df))
+      # Mark DISGENET edges hidden if checkbox is off — proxy flips them on toggle
+      if (nrow(edges_df) > 0 && "assoc_type" %in% names(edges_df))
+        edges_df$hidden <- !is_disgenet_checked &
+          grepl("^DISGENET$", edges_df$assoc_type, ignore.case = TRUE)
 
       ## --- nodes (preserve platform styling, force labels) ----------------------
       nodes_df <- subnet$nodes
@@ -2059,6 +2073,11 @@ server <- function(input, output, session) {
         dplyr::filter(from %in% valid_nodes & to %in% valid_nodes)
 
       nodes_df$group <- NULL
+      # Mark overlay disease nodes hidden if DISGENET checkbox is off
+      if (!is_disgenet_checked && length(overlay_node_ids) > 0) {
+        if (!"hidden" %in% names(nodes_df)) nodes_df$hidden <- FALSE
+        nodes_df$hidden[nodes_df$id %in% overlay_node_ids] <- TRUE
+      }
       storage$nodes <- nodes_df
       storage$edges <- edges_df
     }
@@ -2090,8 +2109,10 @@ server <- function(input, output, session) {
         "kk"     = igraph::layout_with_kk(g_sub),
         "circle" = igraph::layout_in_circle(g_sub),
         "bipartite" = {
-          v_names <- igraph::V(g_sub)$name
-          focus_v  <- which(v_names == focus_id)
+          v_names  <- igraph::V(g_sub)$name
+          # focus_id is only defined in the normal render branch, not in saved-view
+          fid      <- if (exists("focus_id", inherits = FALSE)) focus_id else v_names[1]
+          focus_v  <- which(v_names == fid)
           if (length(focus_v) == 0) focus_v <- 1L
           raw_d <- igraph::distances(g_sub, v = focus_v)[1, ]
           raw_d[is.infinite(raw_d)] <- max(raw_d[is.finite(raw_d)], na.rm = TRUE) + 1
@@ -2299,11 +2320,19 @@ server <- function(input, output, session) {
 
     # Determine which display edges pass all filters
     # pval/beta filters: match via subnet rows (same row order as disp_ed)
+    # DISGENET rows are exempt from the pval filter only: their pvalue defaults to
+    # 1 (no meaningful p-value), so the slider would otherwise hide them all.
+    # The beta/weight filter still applies — DISGENET sheets carry real COR scores.
     keep <- rep(TRUE, nrow(disp_ed))
+    is_dis <- if ("assoc_type" %in% names(disp_ed))
+      grepl("^DISGENET$", disp_ed$assoc_type, ignore.case = TRUE)
+    else
+      rep(FALSE, nrow(disp_ed))
     if (!is.null(pval_thresh) && pval_thresh > 0 && "pvalue" %in% names(sub_ed))
-      keep <- keep & (-log10(pmax(sub_ed$pvalue, 1e-300)) >= pval_thresh)
+      keep[!is_dis] <- keep[!is_dis] &
+        (-log10(pmax(sub_ed$pvalue[!is_dis], 1e-300)) >= pval_thresh)
     if (!is.null(beta_thresh) && beta_thresh > 0 && "weight" %in% names(sub_ed))
-      keep <- keep & (sub_ed$weight >= beta_thresh)
+      keep <- keep & !is.na(sub_ed$weight) & (sub_ed$weight >= beta_thresh)
     # type filter: use assoc_type stored directly in display edges (handles multi-edges correctly)
     if (!is.null(types_keep) && "assoc_type" %in% names(disp_ed))
       keep <- keep & (disp_ed$assoc_type %in% types_keep)
@@ -2330,14 +2359,27 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
 
+    # Keep storage$nodes$hidden in sync so the path-target observe stays accurate
+    storage$nodes$hidden <- node_update$hidden
+
     visNetworkProxy("network") %>%
       visUpdateEdges(edges = edge_update) %>%
       visUpdateNodes(nodes = node_update)
   }, ignoreInit = TRUE)
 
   # ── Shortest path ──────────────────────────────────────────────────────────
-  # pathTargetUI is now a server-side selectizeInput populated on data load.
-  # (old renderUI removed — choices streamed on demand to avoid 21k-item dropdown lag)
+  # Refresh target choices whenever the visible subnet changes. Filter to only
+  # non-hidden, non-focus nodes so disease nodes and isolated nodes are excluded.
+  observe({
+    req(storage$nodes, storage$focus)
+    nd <- storage$nodes
+    hid <- nd$hidden
+    visible <- if (is.null(hid) || !is.logical(hid)) nd$id else nd$id[is.na(hid) | !hid]
+    node_ids <- setdiff(as.character(visible), as.character(storage$focus))
+    updateSelectizeInput(session, "pathTarget",
+      choices = c("(select)" = "", sort(node_ids)),
+      server  = FALSE)
+  })
 
   observeEvent(input$findPathBtn, {
     req(myValues$fullnet, storage$focus, input$pathTarget)
@@ -2386,24 +2428,46 @@ server <- function(input, output, session) {
     )
 
     # Render path as its own subnet view
-    path_nodes_df <- nodes_full %>%
-      dplyr::filter(id %in% path_nodes) %>%
-      dplyr::mutate(
-        label       = dplyr::if_else(is.na(label) | label == "", id, label),
-        title       = paste0("<b>", label, "</b><br>", id, "<br>Platform: ", plat),
-        size        = ifelse(id == focus_id, 30, 22),
-        borderWidth = ifelse(id == focus_id | id == target_id, 4, 2)
+    tryCatch({
+      path_nodes_df <- nodes_full %>%
+        dplyr::filter(id %in% path_nodes) %>%
+        dplyr::mutate(
+          label       = dplyr::if_else(is.na(label) | label == "", id, label),
+          title       = paste0("<b>", label, "</b><br>", id, "<br>Platform: ", plat),
+          size        = ifelse(id == focus_id, 30, 22),
+          borderWidth = ifelse(id == focus_id | id == target_id, 4, 2)
+        )
+
+      # Apply platform styling so path nodes render with proper colors/shapes
+      path_nodes_df$color.background <- sapply(
+        path_nodes_df$plat,
+        function(p) rv$customSelections[[p]]$color %||% "#999999"
+      )
+      path_nodes_df$shape <- sapply(
+        path_nodes_df$plat,
+        function(p) rv$customSelections[[p]]$shape %||% "triangle"
       )
 
-    path_edges_raw <- edges_full %>%
-      dplyr::filter(from_chr %in% path_nodes & to_chr %in% path_nodes)
+      path_edges_raw <- edges_full %>%
+        dplyr::filter(from_chr %in% path_nodes & to_chr %in% path_nodes)
 
-    storage$subnet  <- list(nodes = path_nodes_df, edges = path_edges_raw)
-    storage$nodes   <- path_nodes_df
-    storage$edges   <- data.frame(from = path_edges_raw$from_chr, to = path_edges_raw$to_chr,
-                                  stringsAsFactors = FALSE)
-    rv$useCaseActive <- TRUE
-    networkTrigger(networkTrigger() + 1)
+      path_edges_df <- data.frame(
+        from       = path_edges_raw$from_chr,
+        to         = path_edges_raw$to_chr,
+        color      = ifelse(path_edges_raw$sign > 0, "blue", "red"),
+        assoc_type = path_edges_raw$type,
+        stringsAsFactors = FALSE
+      )
+      if (nrow(path_edges_df) > 0) path_edges_df$id <- seq_len(nrow(path_edges_df))
+
+      storage$subnet  <- list(nodes = path_nodes_df, edges = path_edges_raw)
+      storage$nodes   <- path_nodes_df
+      storage$edges   <- path_edges_df
+      rv$useCaseActive <- TRUE
+      networkTrigger(networkTrigger() + 1)
+    }, error = function(e) {
+      showNotification(paste("Could not render path:", e$message), type = "error", duration = 10)
+    })
   })
 
   # ── Node statistics panel ──────────────────────────────────────────────────
@@ -3099,7 +3163,7 @@ ui <- dashboardPage(
                                uiOutput("edgeTypeFilter")
                         ),
                         column(width = 3,
-                               selectizeInput("pathTarget", "Path to (full network)",
+                               selectizeInput("pathTarget", "Path to (visible nodes)",
                                               choices = NULL,
                                               options = list(placeholder = "type to search...",
                                                              maxOptions = 10L)),
